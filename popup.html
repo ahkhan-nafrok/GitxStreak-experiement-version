@@ -7,7 +7,6 @@
 </head>
 <body>
   <div class="bg-glow bg-glow-a" aria-hidden="true"></div>
-  <div class="bg-glow bg-glow-b" aria-hidden="true"></div>
 
   <header class="app-header">
     <div class="brand">
@@ -16,10 +15,20 @@
     </div>
   </header>
 
-  <nav class="tabs">
+  <!-- Nav is now a single visual pill: Pulse/Projects tabs + the Settings
+       gear all live inside one bordered container instead of two
+       disconnected elements. The gear's full-swap behavior (popup.js) is
+       unchanged — only the container around it changed. -->
+  <nav class="nav-shell">
     <div class="tabs-main" id="tabs-main" role="tablist">
-      <button class="tab-btn active" data-tab="pulse" role="tab" aria-selected="true">Pulse</button>
-      <button class="tab-btn" data-tab="projects" role="tab" aria-selected="false">Projects</button>
+      <button class="tab-btn active" data-tab="pulse" role="tab" aria-selected="true">
+        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        Pulse
+      </button>
+      <button class="tab-btn" data-tab="projects" role="tab" aria-selected="false">
+        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        Projects
+      </button>
     </div>
     <span id="settings-nav-label" class="settings-nav-label" hidden>Settings</span>
     <button id="settings-toggle-btn" class="settings-toggle-btn" type="button" aria-label="Settings" title="Settings">
@@ -32,12 +41,19 @@
     <div class="glass-card gh-overview-card">
       <div class="gh-overview-header">
         <h3>Last 12 Months</h3>
-        <span id="pulse-last-updated" class="pulse-last-updated hint" hidden></span>
       </div>
 
+      <!-- Update CTA + freshness caption are now one unit: the "Updated
+           Xm ago" fact used to sit alone in the card header, disconnected
+           from the button that causes it to change. It now lives inside
+           the button itself, right-aligned, so it's one glance instead of
+           two separate facts to reconcile. -->
       <button id="pulse-refresh-btn" class="btn-primary pulse-update-btn" type="button">
         <span class="pulse-update-icon" aria-hidden="true"></span>
         <span id="pulse-update-btn-label">Click to Update</span>
+        <span id="pulse-last-updated" class="pulse-last-updated" hidden>
+          <span class="pulse-live-dot" aria-hidden="true"></span><span id="pulse-last-updated-text"></span>
+        </span>
       </button>
 
       <div id="pulse-token-prompt" class="empty-state" hidden>
@@ -45,14 +61,20 @@
       </div>
 
       <div id="pulse-calendar-wrap" class="gh-cal-wrap" hidden>
-        <div id="pulse-calendar-grid" class="gh-cal-grid"></div>
+        <div class="gh-cal-inner">
+          <div id="pulse-calendar-months" class="gh-cal-months" aria-hidden="true"></div>
+          <div id="pulse-calendar-grid" class="gh-cal-grid"></div>
+        </div>
       </div>
       <div id="pulse-status" class="status" hidden></div>
 
       <div id="pulse-stats-row" class="pulse-stats-row" hidden>
         <div class="pulse-stat">
-          <div class="pulse-stat-label">Current Streak</div>
-          <div id="pulse-streak" class="pulse-stat-value">—</div>
+          <div class="pulse-stat-label">
+            <svg class="pulse-flame-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
+            Current Streak
+          </div>
+          <div id="pulse-streak" class="pulse-stat-value pulse-stat-value-flame">—</div>
           <div id="pulse-streak-note" class="pulse-stat-note"></div>
         </div>
         <div class="pulse-stat-divider" aria-hidden="true"></div>
@@ -64,17 +86,25 @@
       </div>
 
       <div id="pulse-last-pushed" class="pulse-last-pushed" hidden>
-        <div class="plp-label">Last Pushed</div>
+        <div class="plp-head">
+          <span class="plp-label">Last Pushed</span>
+        </div>
         <div class="plp-body">
-          <div class="plp-repo-row">
-            <span id="plp-repo-name" class="plp-repo-name mono"></span>
-            <span id="plp-repo-badge" class="plp-badge" hidden>Private</span>
+          <div class="plp-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
           </div>
-          <p id="plp-repo-desc" class="hint plp-desc"></p>
-          <div class="plp-meta-row">
-            <span id="plp-pushed-at" class="fact-line"></span>
-            <span id="plp-language" class="fact-line"></span>
+          <div class="plp-content">
+            <div class="plp-repo-row">
+              <span id="plp-repo-name" class="plp-repo-name mono"></span>
+              <span id="plp-repo-badge" class="plp-badge" hidden>Private</span>
+            </div>
+            <p id="plp-repo-desc" class="hint plp-desc"></p>
+            <div class="plp-meta-row">
+              <span id="plp-pushed-at" class="fact-line"></span>
+              <span id="plp-language" class="fact-line"></span>
+            </div>
           </div>
+          <svg class="plp-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3l5 5-5 5"/></svg>
         </div>
       </div>
     </div>
