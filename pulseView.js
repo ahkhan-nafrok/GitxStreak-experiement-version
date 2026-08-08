@@ -3,6 +3,16 @@
 // streak + this-year total + last-pushed repo. Requires a connected GitHub
 // token (GraphQL has no unauthenticated tier), read through the vault —
 // never plaintext.
+//
+// Redesign pass (this session): drag-scroll now has real momentum instead
+// of stopping dead on release (see enableDragScroll below — this was the
+// single biggest source of the "clunky" feel). Added a month-label row
+// that scrolls in sync with the grid. Today's cell gets a ring in the
+// ember accent (the ONLY other place besides the streak stat that uses
+// color — everything else stays monochrome, per the locked Theme B rule).
+// The "Updated Xm ago" freshness caption now renders into a nested span
+// inside the Update button itself rather than a separate header element —
+// see renderLastUpdated().
 import { ghGraphQL, getMostRecentlyPushedRepo } from "./lib/github.js";
 import { chromeStorageAdapter } from "./lib/storageAdapter.js";
 import { getToken } from "./lib/tokenVault.js";
@@ -18,10 +28,12 @@ import {
 
 const CACHE_KEY = "ghContributionCache";
 const SUCCESS_STATE_MS = 1600;
+const MONTH_NAMES = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
 
 export function initPulseView() {
   const tokenPrompt = document.getElementById("pulse-token-prompt");
   const calendarWrap = document.getElementById("pulse-calendar-wrap");
+  const monthsEl = document.getElementById("pulse-calendar-months");
   const gridEl = document.getElementById("pulse-calendar-grid");
   const statsRow = document.getElementById("pulse-stats-row");
   const streakEl = document.getElementById("pulse-streak");
@@ -31,6 +43,7 @@ export function initPulseView() {
   const refreshBtn = document.getElementById("pulse-refresh-btn");
   const updateLabelEl = document.getElementById("pulse-update-btn-label");
   const lastUpdatedEl = document.getElementById("pulse-last-updated");
+  const lastUpdatedTextEl = document.getElementById("pulse-last-updated-text");
   const lastPushedEl = document.getElementById("pulse-last-pushed");
   const plpRepoNameEl = document.getElementById("plp-repo-name");
   const plpRepoBadgeEl = document.getElementById("plp-repo-badge");
@@ -46,12 +59,6 @@ export function initPulseView() {
     statusEl.classList.toggle("error", isError);
   }
 
-  /**
-   * idle / loading / success — none of these lean on color per the
-   * monochrome design system; the icon shape, spin, and a brief scale
-   * pulse carry the state instead. "success" auto-reverts to idle after a
-   * short beat so the button doesn't get stuck reading "Updated" forever.
-   */
   function setUpdateBtnState(state) {
     clearTimeout(successTimer);
     refreshBtn.classList.remove("is-loading", "is-success");
@@ -73,25 +80,59 @@ export function initPulseView() {
     }
   }
 
+  /** Today's date-key in the same YYYY-MM-DD shape as cell.date, so a
+   * single string comparison marks the current-day cell for the ember
+   * ring — no changes to lib/pulse.js's data shape needed. */
+  function todayDateKey() {
+    const d = new Date();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${d.getFullYear()}-${mm}-${dd}`;
+  }
+
   function renderGrid(weeks) {
+    const todayKey = todayDateKey();
     gridEl.innerHTML = weeks
       .map((week) => {
         const cellsHtml = week
           .map((cell) => {
-            const stateClass = cell ? (cell.contributed ? "is-active" : "is-empty") : "is-blank";
-            const titleAttr = cell ? ` title="${escapeHtml(cell.date)}"` : "";
-            return `<div class="gh-cal-cell ${stateClass}"${titleAttr}></div>`;
+            if (!cell) return '<div class="gh-cal-cell is-blank"></div>';
+            const classes = ["gh-cal-cell", cell.contributed ? "is-active" : "is-empty"];
+            if (cell.date === todayKey) classes.push("is-today");
+            return `<div class="${classes.join(" ")}" title="${escapeHtml(cell.date)}"></div>`;
           })
           .join("");
         return `<div class="gh-cal-col">${cellsHtml}</div>`;
       })
       .join("");
+    renderMonthLabels(weeks);
     scrollToPresent();
   }
 
-  /** Defaults the calendar to its current-month (rightmost) end rather than
-   * opening on the oldest, year-ago end. Runs after layout so scrollWidth
-   * reflects the just-rendered grid. */
+  /** One label per week-column, shown only when the month changes from
+   * the previous column (mirrors how GitHub's own contribution graph
+   * avoids repeating the same month name every single week). Lives in
+   * its own row inside the same scrollable wrap as the grid so both move
+   * together under drag. */
+  function renderMonthLabels(weeks) {
+    if (!monthsEl) return;
+    let lastMonth = null;
+    monthsEl.innerHTML = weeks
+      .map((week) => {
+        const firstDated = week.find((c) => c && c.date);
+        let label = "";
+        if (firstDated) {
+          const month = new Date(firstDated.date).getMonth();
+          if (month !== lastMonth) {
+            label = MONTH_NAMES[month];
+            lastMonth = month;
+          }
+        }
+        return `<div class="gh-cal-month-label">${label}</div>`;
+      })
+      .join("");
+  }
+
   function scrollToPresent() {
     requestAnimationFrame(() => {
       calendarWrap.scrollLeft = calendarWrap.scrollWidth;
@@ -123,13 +164,17 @@ export function initPulseView() {
     plpLanguageEl.textContent = repo.language || "";
   }
 
+  /** Freshness caption now renders into the nested text span inside the
+   * Update button (see popup.html: #pulse-last-updated wraps a live-dot +
+   * #pulse-last-updated-text), rather than a standalone header element,
+   * so the fact and the action that changes it read as one unit. */
   function renderLastUpdated(fetchedAt) {
     if (!fetchedAt) {
       lastUpdatedEl.hidden = true;
       return;
     }
     lastUpdatedEl.hidden = false;
-    lastUpdatedEl.textContent = `Updated ${formatRelativeTime(fetchedAt)}`;
+    lastUpdatedTextEl.textContent = `Updated ${formatRelativeTime(fetchedAt)}`;
   }
 
   function renderAll(cache) {
@@ -142,15 +187,6 @@ export function initPulseView() {
     renderLastUpdated(cache.fetchedAt || null);
   }
 
-  /**
-   * forceRefresh=true means the user clicked Update. Even without a forced
-   * refresh, a cache from a previous UTC day is always treated as stale and
-   * refetched automatically on open — the rolling window shifts daily, so
-   * "today" needs to exist in the data, not just "nothing changed." A
-   * cache saved before the last-pushed feature existed (missing that field)
-   * is also treated as stale, so it gets backfilled on next open rather
-   * than permanently hiding that section.
-   */
   async function load(forceRefresh = false) {
     const token = await getToken(chromeStorageAdapter);
     if (!token) {
@@ -178,9 +214,6 @@ export function initPulseView() {
     setStatus("Fetching your latest activity...");
     try {
       const range = getRolling12MonthRange();
-      // Last-pushed is purely additive/display — its failure must never
-      // block the core contribution data from loading, so it's caught
-      // independently rather than let Promise.all reject the whole batch.
       const [contribData, lastPushedRepo] = await Promise.all([
         ghGraphQL(CONTRIBUTION_QUERY, { from: range.from, to: range.to }, token),
         getMostRecentlyPushedRepo(token).catch(() => null),
@@ -210,29 +243,71 @@ export function initPulseView() {
   load(false);
 }
 
-/** Click-and-drag / touch-swipe horizontal scroll for the calendar wrap —
- * replaces the native scrollbar entirely (see popup.css: scrollbar hidden,
- * edges fade via mask-image instead). Mouse listeners are bound on
- * `window` for move/up so a drag that leaves the element's bounds doesn't
- * get stuck "down." */
+/** Click-and-drag / touch-swipe horizontal scroll for the calendar wrap,
+ * now WITH momentum: on release, the last-known drag velocity decays via
+ * friction into continued scrolling, eased out — the same feel as a
+ * native scroll surface (and GitHub's own contribution graph). The
+ * previous version was strict 1:1 drag with zero carry-over, so motion
+ * stopped dead the instant the pointer lifted; that abruptness was the
+ * single largest contributor to the "clunky" feedback this redesign was
+ * asked to fix. Mouse listeners stay on `window` for move/up so a drag
+ * leaving the element's bounds doesn't get stuck "down." */
 function enableDragScroll(el) {
   let isDown = false;
   let startX = 0;
   let scrollLeftStart = 0;
+  let lastX = 0;
+  let lastT = 0;
+  let velocity = 0; // px/ms
+  let momentumFrame = null;
+
+  function stopMomentum() {
+    if (momentumFrame !== null) {
+      cancelAnimationFrame(momentumFrame);
+      momentumFrame = null;
+    }
+  }
 
   function start(x) {
+    stopMomentum();
     isDown = true;
     el.classList.add("is-dragging");
     startX = x;
     scrollLeftStart = el.scrollLeft;
+    lastX = x;
+    lastT = performance.now();
+    velocity = 0;
   }
+
   function move(x) {
     if (!isDown) return;
     el.scrollLeft = scrollLeftStart - (x - startX);
+    const now = performance.now();
+    const dt = now - lastT;
+    if (dt > 0) velocity = (x - lastX) / dt;
+    lastX = x;
+    lastT = now;
   }
+
   function end() {
+    if (!isDown) return;
     isDown = false;
     el.classList.remove("is-dragging");
+
+    let v = velocity * 16; // approximate px-per-frame at 60fps from px/ms
+    const FRICTION = 0.94;
+    const MIN_VELOCITY = 0.4;
+
+    function step() {
+      if (Math.abs(v) < MIN_VELOCITY) {
+        momentumFrame = null;
+        return;
+      }
+      el.scrollLeft -= v;
+      v *= FRICTION;
+      momentumFrame = requestAnimationFrame(step);
+    }
+    momentumFrame = requestAnimationFrame(step);
   }
 
   el.addEventListener("mousedown", (e) => {
@@ -247,8 +322,6 @@ function enableDragScroll(el) {
   el.addEventListener("touchend", end);
 }
 
-/** Short relative-time label ("just now", "3h ago", "2d ago", ...) used for
- * both the "Updated ..." caption and the last-pushed repo's timestamp. */
 function formatRelativeTime(isoString, now = new Date()) {
   if (!isoString) return "";
   const thenMs = new Date(isoString).getTime();
