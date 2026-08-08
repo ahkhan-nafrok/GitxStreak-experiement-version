@@ -1,70 +1,73 @@
-/* popup.css — GITSTREAK design system (monochrome)
-   Pure black / graphite / grey / white. No hue anywhere. All "signature"
-   moments (primary CTA, pinned state, progress fill, focus ring) read
-   through white-on-black contrast and motion, not color. Staleness /
-   destructive states are distinguished by weight, icon, and motion.
+/* popup.css — GITSTREAK design system, v2
+   Theme B locked: monochrome base + one ember accent (#FF6A3D), scoped to
+   exactly three things — the streak flame icon, the streak number, and a
+   ring on today's calendar cell. Nothing else in the app uses color.
 
-   UI/UX pass (this session):
-     - Settings is no longer a third tab button. Nav now shows Pulse/
-       Projects plus a gear icon (.settings-toggle-btn) that does a full
-       swap into the Settings panel and turns into a back arrow
-       (.is-back). See popup.js for the swap logic.
-     - Project detail card gained a "Back to Projects" button
-       (.pd-close-btn) so opening a repo no longer feels like a one-way
-       door.
-     - Projects tab gained a small list header with a live tracked-repo
-       count badge (.projects-list-header / .projects-count-badge).
-     - Pin/delete icons on list rows now reveal on hover/focus instead of
-       sitting at full opacity all the time — quieter at rest, still fully
-       reachable via keyboard focus.
-     - Settings token entry group (input + hint + Test/Save buttons) is
-       now hidden entirely once a token is connected — only the
-       "Connected as ..." + Revoke Locally row shows. See
-       #settings-token-card.is-connected below and settingsView.js.
+   This pass (redesign session):
+     - "Vercel dark" pass: true #000 base, blur pulled from 22px to 10px
+       (flatter matte panels instead of heavy frosted glass), radii
+       tightened, ambient glow reduced to one faint corner instead of two.
+     - FIX: .pulse-update-btn had no margin-bottom, so it read as
+       overlapping the month-label row directly beneath it. Fixed with
+       18px of space (see .pulse-update-btn below).
+     - Motion unified onto ONE easing curve (--ease) and a tighter set of
+       durations. The old --dur-slow (0.6s) was shared by three unrelated
+       animations (icon spin-to-check, button shimmer sweep, success
+       pulse) firing at once on hover/click — that's a good chunk of what
+       read as "clunky." Durations are now purpose-scoped, not shared.
+     - Nav is one visual pill: Pulse/Projects tabs + the Settings gear now
+       share a single bordered container instead of two disconnected
+       floating elements with mismatched spacing.
+     - Update CTA and its "Updated Xm ago" freshness caption are merged
+       into one unit (caption now lives inside the button).
+     - Last Pushed is now a real tappable row: icon box, meta line,
+       chevron, all with hover/press feedback — it had none before.
+     - Project list rows get a hover-revealed chevron (pure CSS, ::after —
+       no DOM/JS changes, so projectsView.js and its tests are untouched).
+     - Calendar drag-scroll physics now live in pulseView.js (momentum +
+       friction decay) — this file only styles the result.
 
-   Removed: everything specific to the old Skeletonizer output panel
-   (compression meter, entry-note, output textarea, template picker) —
-   those classes no longer exist anywhere in the HTML/JS, so they're
-   dropped here too rather than left as dead CSS. */
+   Unchanged on purpose: Settings tab structure/logic, projectsView.js and
+   settingsView.js were not touched at all — only new CSS classes were
+   added that layer on top of their existing markup. */
 
 :root {
-  /* ---- surfaces ---- */
-  --bg-base: #0a0b0d;
-  --bg-base-2: #0d0e11;
-  --glass-fill: rgba(255, 255, 255, 0.045);
-  --glass-fill-hover: rgba(255, 255, 255, 0.075);
-  --glass-fill-active: rgba(255, 255, 255, 0.03);
-  --glass-border: rgba(255, 255, 255, 0.09);
-  --glass-border-strong: rgba(255, 255, 255, 0.17);
+  /* ---- surfaces: true black, flat matte panels ---- */
+  --bg-base: #000000;
+  --glass-fill: rgba(255, 255, 255, 0.035);
+  --glass-fill-hover: rgba(255, 255, 255, 0.065);
+  --glass-fill-active: rgba(255, 255, 255, 0.025);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-border-strong: rgba(255, 255, 255, 0.16);
 
   /* ---- text ---- */
-  --text-primary: #f2f3f5;
-  --text-secondary: #9a9da6;
-  --text-tertiary: #64676f;
+  --text-primary: #ededed;
+  --text-secondary: #888888;
+  --text-tertiary: #555555;
 
-  /* ---- accent: monochrome only ---- */
-  --accent: #f4f4f5;
+  /* ---- monochrome accent (buttons, primary surfaces) ---- */
   --accent-strong: #ffffff;
-  --accent-dim: rgba(255, 255, 255, 0.10);
-  --accent-glow: rgba(255, 255, 255, 0.22);
-  --accent-ink: #0a0b0d;
+  --accent-glow: rgba(255, 255, 255, 0.16);
+  --accent-ink: #000000;
 
-  /* ---- staleness signal: motion + weight, not hue ---- */
-  --stale: #b9bcc4;
+  /* ---- THE one accent: ember. Scoped to streak flame / streak number /
+     today's calendar cell ring. Nowhere else. ---- */
+  --ember: #ff6a3d;
+  --ember-glow: rgba(255, 106, 61, 0.28);
 
   /* ---- destructive: desaturated on purpose ---- */
   --danger: #e4e5e8;
 
-  /* ---- motion ---- */
-  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  /* ---- motion: one easing curve, purpose-scoped durations ---- */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --dur-fast: 0.12s;
-  --dur-base: 0.2s;
-  --dur-slow: 0.6s;
+  --dur-press: 0.1s;   /* button active/press states */
+  --dur-hover: 0.16s;  /* hover feedback: color/background/border */
+  --dur-motion: 0.28s; /* icon rotation, panel transitions, swaps */
 
   /* ---- misc ---- */
-  --radius-lg: 18px;
-  --radius-md: 12px;
+  --radius-lg: 14px;
+  --radius-md: 10px;
   --radius-sm: 8px;
   --radius-pill: 999px;
   --font-sans: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
@@ -73,12 +76,6 @@
 
 * { box-sizing: border-box; }
 
-/* Author-stylesheet rules at equal specificity to [hidden] can beat the
-   browser's UA rule (`[hidden] { display: none }`) in the cascade — as
-   `.empty-state { display: flex }` was doing for Pulse's token prompt.
-   Forcing it here means `el.hidden = true/false` always actually works,
-   everywhere in the app, regardless of what other display rules a class
-   sets. */
 [hidden] { display: none !important; }
 
 html, body {
@@ -87,8 +84,7 @@ html, body {
   width: 380px;
   min-height: 520px;
   background:
-    radial-gradient(600px 340px at 12% -10%, rgba(255, 255, 255, 0.05), transparent 60%),
-    radial-gradient(520px 320px at 100% 30%, rgba(255, 255, 255, 0.03), transparent 55%),
+    radial-gradient(560px 280px at 10% -10%, rgba(255, 255, 255, 0.025), transparent 60%),
     var(--bg-base);
   color: var(--text-primary);
   font-family: var(--font-sans);
@@ -109,19 +105,18 @@ html, body {
   }
 }
 
-/* ---------------- background glow ---------------- */
+/* ---------------- background glow (one faint corner, not two) ---------------- */
 .bg-glow {
   position: fixed;
+  width: 260px; height: 260px;
+  top: -100px; left: -80px;
   border-radius: 50%;
-  filter: blur(90px);
-  opacity: 0.10;
+  filter: blur(80px);
+  opacity: 0.06;
   pointer-events: none;
   z-index: 0;
-  transition: opacity var(--dur-slow) var(--ease-out);
   background: radial-gradient(circle, #ffffff, transparent 70%);
 }
-.bg-glow-a { width: 280px; height: 280px; top: -100px; left: -80px; }
-.bg-glow-b { width: 240px; height: 240px; bottom: -80px; right: -80px; opacity: 0.07; }
 
 /* ---------------- header ---------------- */
 .app-header { position: relative; z-index: 1; padding: 16px 18px 10px; }
@@ -132,7 +127,7 @@ html, body {
   height: 18px;
   border-radius: 5px;
   background: linear-gradient(135deg, #ffffff, #9a9da6);
-  box-shadow: 0 0 14px var(--accent-glow);
+  box-shadow: 0 0 10px var(--accent-glow);
   flex-shrink: 0;
 }
 .brand-mark::before {
@@ -151,19 +146,27 @@ html, body {
 }
 .brand h1 { font-size: 14.5px; font-weight: 600; margin: 0; letter-spacing: -0.1px; }
 
-/* ---------------- tabs + settings gear toggle ---------------- */
-.tabs {
+/* ---------------- nav: ONE pill containing tabs + settings gear ---------------- */
+.nav-shell {
   position: relative;
   z-index: 1;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 14px 12px;
+  gap: 3px;
+  margin: 0 14px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--glass-border);
+  border-radius: 13px;
+  padding: 3px;
 }
-.tabs-main { display: flex; gap: 4px; flex: 1; min-width: 0; }
+.tabs-main { display: flex; gap: 3px; flex: 1; min-width: 0; }
 
 .tab-btn {
   flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   background: transparent;
   border: 1px solid transparent;
   color: var(--text-secondary);
@@ -173,27 +176,18 @@ html, body {
   padding: 8px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: color var(--dur-base) var(--ease-out),
-              background var(--dur-base) var(--ease-out),
-              border-color var(--dur-base) var(--ease-out);
+  transition: color var(--dur-hover) var(--ease),
+              background var(--dur-hover) var(--ease),
+              border-color var(--dur-hover) var(--ease);
 }
-.tab-btn:hover {
-  color: var(--text-primary);
-  background: var(--glass-fill);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
-}
-.tab-btn.active {
-  color: var(--text-primary);
-  background: var(--glass-fill-hover);
-  border-color: var(--glass-border);
-}
+.tab-icon { width: 13px; height: 13px; flex-shrink: 0; opacity: 0.85; }
+.tab-btn:hover { color: var(--text-primary); background: var(--glass-fill); }
+.tab-btn.active { color: var(--text-primary); background: var(--glass-fill-hover); border-color: var(--glass-border); }
 .tab-btn:focus-visible, button:focus-visible, input:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--bg-base), 0 0 0 4px rgba(255, 255, 255, 0.45);
+  box-shadow: 0 0 0 2px var(--bg-base), 0 0 0 4px rgba(255, 255, 255, 0.4);
 }
 
-/* Label that takes the tabs-main's place while Settings is open (full
-   swap) — same slot, so the nav's height/position never jumps. */
 .settings-nav-label {
   flex: 1;
   min-width: 0;
@@ -203,9 +197,6 @@ html, body {
   padding: 8px 2px;
 }
 
-/* Gear <-> back-arrow toggle. Icon itself swaps via .is-back rather than
-   two separate elements, keeping this a single consistently-positioned
-   button whether idle, hovered, or active in Settings mode. */
 .settings-toggle-btn {
   display: flex;
   align-items: center;
@@ -214,19 +205,19 @@ html, body {
   height: 32px;
   flex-shrink: 0;
   background: transparent;
-  border: 1px solid var(--glass-border);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: color var(--dur-base) var(--ease-out),
-              background var(--dur-base) var(--ease-out),
-              border-color var(--dur-base) var(--ease-out),
-              transform var(--dur-fast) var(--ease-out);
+  transition: color var(--dur-hover) var(--ease),
+              background var(--dur-hover) var(--ease),
+              border-color var(--dur-hover) var(--ease),
+              transform var(--dur-press) var(--ease);
 }
 .settings-toggle-btn:hover {
   color: var(--text-primary);
   background: var(--glass-fill);
-  border-color: var(--glass-border-strong);
+  border-color: var(--glass-border);
 }
 .settings-toggle-btn:active { transform: scale(0.92); }
 .settings-toggle-btn.is-back {
@@ -246,29 +237,32 @@ html, body {
   mask-position: center;
   -webkit-mask-size: contain;
   mask-size: contain;
-  transition: transform var(--dur-base) var(--ease-out);
+  transition: transform var(--dur-motion) var(--ease);
 }
+/* Back-arrow state: rotate the SAME gear glyph 180° rather than swapping
+   mask images with no transition — a smooth rotation reads as "this
+   button changed mode," a hard image-swap read as a flicker. */
 .settings-toggle-btn.is-back .settings-toggle-icon {
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M10 3 5 8l5 5' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M10 3 5 8l5 5' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
 .tab-panel { display: none; position: relative; z-index: 1; padding: 0 14px 18px; }
-.tab-panel.active { display: block; animation: panel-in var(--dur-base) var(--ease-out); }
+.tab-panel.active { display: block; animation: panel-in var(--dur-motion) var(--ease); }
 @keyframes panel-in {
   from { opacity: 0; transform: translateY(3px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* ---------------- glass card ---------------- */
+/* ---------------- glass card (flatter, less blur — "Vercel dark") ---------------- */
 .glass-card {
   background: var(--glass-fill);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
-  backdrop-filter: blur(22px);
-  -webkit-backdrop-filter: blur(22px);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   padding: 16px;
-  transition: border-color var(--dur-base) var(--ease-out);
+  transition: border-color var(--dur-hover) var(--ease);
   margin-bottom: 10px;
 }
 
@@ -277,7 +271,7 @@ html, body {
 .field label { display: block; font-size: 11.5px; color: var(--text-secondary); margin-bottom: 6px; font-weight: 500; }
 input[type="text"], input[type="password"] {
   width: 100%;
-  background: rgba(255, 255, 255, 0.035);
+  background: rgba(255, 255, 255, 0.03);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
@@ -285,24 +279,24 @@ input[type="text"], input[type="password"] {
   font-size: 12px;
   padding: 9px 10px;
   outline: none;
-  transition: border-color var(--dur-base) var(--ease-out),
-              background var(--dur-base) var(--ease-out),
-              box-shadow var(--dur-base) var(--ease-out);
+  transition: border-color var(--dur-hover) var(--ease),
+              background var(--dur-hover) var(--ease),
+              box-shadow var(--dur-hover) var(--ease);
 }
 input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:focus, input:-webkit-autofill:active {
-  -webkit-box-shadow: 0 0 0 30px #14151a inset !important;
+  -webkit-box-shadow: 0 0 0 30px #0a0a0a inset !important;
   -webkit-text-fill-color: var(--text-primary) !important;
   caret-color: var(--text-primary);
   transition: background-color 9999s ease-in-out 0s;
 }
 input[type="text"]:hover, input[type="password"]:hover {
   border-color: var(--glass-border-strong);
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.05);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.04);
 }
 input[type="text"]:focus, input[type="password"]:focus {
-  border-color: rgba(255, 255, 255, 0.4);
-  background: rgba(255, 255, 255, 0.055);
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.10);
+  border-color: rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.045);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.08);
 }
 input::placeholder { color: var(--text-tertiary); }
 input:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -319,14 +313,14 @@ input:disabled { opacity: 0.45; cursor: not-allowed; }
   padding: 8px 10px;
   border: 1px dashed var(--glass-border);
   border-radius: var(--radius-sm);
-  transition: color var(--dur-base) var(--ease-out),
-              border-color var(--dur-base) var(--ease-out),
-              background var(--dur-base) var(--ease-out);
+  transition: color var(--dur-hover) var(--ease),
+              border-color var(--dur-hover) var(--ease),
+              background var(--dur-hover) var(--ease);
 }
 .field-collapsible summary:hover {
   color: var(--text-primary);
-  border-color: rgba(255, 255, 255, 0.28);
-  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.025);
 }
 .field-collapsible[open] summary { border-style: solid; border-color: var(--glass-border); }
 .field-collapsible summary::-webkit-details-marker { display: none; }
@@ -344,7 +338,7 @@ input:disabled { opacity: 0.45; cursor: not-allowed; }
   mask-position: center;
   -webkit-mask-size: contain;
   mask-size: contain;
-  transition: transform var(--dur-base) var(--ease-out);
+  transition: transform var(--dur-motion) var(--ease);
 }
 .field-collapsible[open] summary::before { transform: rotate(90deg); }
 .add-project-trigger summary::before {
@@ -356,7 +350,7 @@ input:disabled { opacity: 0.45; cursor: not-allowed; }
 .hint { color: var(--text-tertiary); font-size: 11px; line-height: 1.5; margin: 4px 0 0; }
 .hint code {
   font-family: var(--font-mono);
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.05);
   border-radius: 4px;
   padding: 1px 4px;
   color: var(--text-secondary);
@@ -383,35 +377,24 @@ button { font-family: var(--font-sans); }
   font-weight: 600;
   letter-spacing: 0.1px;
   color: var(--accent-ink);
-  background: linear-gradient(110deg, #e9e9eb 0%, #ffffff 45%, #e9e9eb 100%);
-  background-size: 220% 100%;
-  background-position: 0% 0%;
+  background: linear-gradient(135deg, #ffffff, #e6e6e9);
   cursor: pointer;
   overflow: hidden;
   isolation: isolate;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.5) inset, 0 4px 14px rgba(0, 0, 0, 0.35);
-  transition: background-position var(--dur-slow) var(--ease-out),
-              box-shadow var(--dur-base) var(--ease-out),
-              transform var(--dur-fast) var(--ease-out);
-}
-.btn-primary::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(115deg, transparent 20%, rgba(255, 255, 255, 0.5) 50%, transparent 80%);
-  transform: translateX(-120%);
-  transition: transform var(--dur-slow) var(--ease-out);
-  z-index: -1;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.5) inset, 0 4px 14px rgba(0, 0, 0, 0.4);
+  /* Single easing curve, one duration per property — the old version had
+     background-position/box-shadow/transform each on a different
+     duration, all firing on the same hover, which read as slightly out
+     of sync. */
+  transition: box-shadow var(--dur-hover) var(--ease),
+              transform var(--dur-press) var(--ease);
 }
 .btn-primary:hover {
-  background-position: 100% 0%;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.55) inset, 0 6px 22px var(--accent-glow);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.55) inset, 0 6px 18px var(--accent-glow);
   transform: translateY(-1px);
 }
-.btn-primary:hover::after { transform: translateX(120%); }
 .btn-primary:active { transform: translateY(0) scale(0.98); }
 .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; transform: none; }
-.btn-primary:disabled::after { display: none; }
 
 #pd-refresh-btn::before {
   content: "";
@@ -427,10 +410,10 @@ button { font-family: var(--font-sans); }
   mask-position: center;
   -webkit-mask-size: contain;
   mask-size: contain;
-  transition: transform var(--dur-slow) var(--ease-out);
+  transition: transform var(--dur-motion) var(--ease);
 }
-#pd-refresh-btn:hover::before { transform: rotate(180deg); }
-#pd-refresh-btn:disabled::before { animation: spin 0.9s linear infinite; }
+#pd-refresh-btn:hover::before { transform: rotate(160deg); }
+#pd-refresh-btn:disabled::before { animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .btn-ghost {
@@ -442,14 +425,13 @@ button { font-family: var(--font-sans); }
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: background var(--dur-base) var(--ease-out),
-              border-color var(--dur-base) var(--ease-out),
-              transform var(--dur-fast) var(--ease-out);
+  transition: background var(--dur-hover) var(--ease),
+              border-color var(--dur-hover) var(--ease),
+              transform var(--dur-press) var(--ease);
 }
 .btn-ghost:hover {
   background: var(--glass-fill-hover);
   border-color: var(--glass-border-strong);
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06);
 }
 .btn-ghost:active { transform: scale(0.98); }
 .btn-ghost:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -459,7 +441,7 @@ button { font-family: var(--font-sans); }
   font-size: 11.5px;
   color: var(--text-secondary);
   padding: 8px 0;
-  transition: color var(--dur-base) var(--ease-out);
+  transition: color var(--dur-hover) var(--ease);
 }
 .status.error { color: var(--danger); font-weight: 600; }
 
@@ -484,36 +466,61 @@ button { font-family: var(--font-sans); }
   color: var(--text-tertiary);
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-pill);
   padding: 2px 8px;
-  transition: color var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out);
 }
 
 /* ---------------- project list ---------------- */
 #project-list { margin-bottom: 12px; display: flex; flex-direction: column; gap: 6px; }
 
 .project-list-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
   background: var(--glass-fill);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
-  padding: 10px 12px;
+  padding: 10px 30px 10px 12px; /* extra right padding reserves room for the hover chevron */
   cursor: pointer;
-  transition: background var(--dur-base) var(--ease-out),
-              border-color var(--dur-base) var(--ease-out),
-              transform var(--dur-fast) var(--ease-out);
+  transition: background var(--dur-hover) var(--ease),
+              border-color var(--dur-hover) var(--ease),
+              transform var(--dur-press) var(--ease);
 }
 .project-list-item:hover { background: var(--glass-fill-hover); transform: translateX(1px); }
 .project-list-item:active { transform: scale(0.995); }
 
-.project-list-item.is-pinned { background: var(--accent-dim); border-color: rgba(255, 255, 255, 0.22); }
-.project-list-item.is-pinned:hover { background: rgba(255, 255, 255, 0.14); }
+/* Chevron affordance — purely decorative CSS, no markup change, so
+   projectsView.js and its tests stay exactly as they were. Reveals on
+   hover/focus-within like the pin/delete icons already did. */
+.project-list-item::after {
+  content: "";
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  transform: translateY(-50%);
+  background: var(--text-tertiary);
+  opacity: 0;
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 3l5 5-5 5' fill='none' stroke='%23000' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 3l5 5-5 5' fill='none' stroke='%23000' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  transition: opacity var(--dur-hover) var(--ease), transform var(--dur-hover) var(--ease);
+}
+.project-list-item:hover::after { opacity: 0.7; transform: translateY(-50%) translateX(2px); }
 
-.project-list-item.is-pending:not(.is-pinned) { border-color: rgba(255, 255, 255, 0.14); border-style: dashed; }
+.project-list-item.is-pinned { background: rgba(255, 255, 255, 0.075); border-color: var(--glass-border-strong); }
+.project-list-item.is-pinned:hover { background: rgba(255, 255, 255, 0.1); }
+
+.project-list-item.is-pending:not(.is-pinned) { border-color: rgba(255, 255, 255, 0.13); border-style: dashed; }
 
 .p-body { flex: 1; min-width: 0; }
 .p-name {
@@ -554,20 +561,15 @@ button { font-family: var(--font-sans); }
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  border: 1px solid var(--stale);
+  border: 1px solid var(--text-secondary);
   background: transparent;
-  animation: pulse-attn 2.4s var(--ease-out) infinite;
+  animation: pulse-attn 2.4s var(--ease) infinite;
 }
 @keyframes pulse-attn {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.4; transform: scale(0.8); }
 }
 
-/* Pin/delete icons: quieter at rest (opacity, not hidden — still fully
-   tappable/reachable), full opacity on row hover or on their own keyboard
-   focus. A pinned state always stays fully visible regardless of hover,
-   since "this is pinned" is a fact worth seeing at a glance, not just on
-   interaction. */
 .p-pin, .p-delete {
   display: flex;
   align-items: center;
@@ -582,10 +584,10 @@ button { font-family: var(--font-sans); }
   border-radius: var(--radius-sm);
   flex-shrink: 0;
   opacity: 0.55;
-  transition: color var(--dur-base) var(--ease-out),
-              background var(--dur-base) var(--ease-out),
-              opacity var(--dur-base) var(--ease-out),
-              transform var(--dur-fast) var(--ease-spring);
+  transition: color var(--dur-hover) var(--ease),
+              background var(--dur-hover) var(--ease),
+              opacity var(--dur-hover) var(--ease),
+              transform var(--dur-press) var(--ease-spring);
 }
 .project-list-item:hover .p-pin,
 .project-list-item:hover .p-delete,
@@ -593,8 +595,8 @@ button { font-family: var(--font-sans); }
 .p-delete:focus-visible {
   opacity: 1;
 }
-.p-pin:hover, .p-delete:hover { color: var(--text-primary); background: rgba(255, 255, 255, 0.07); }
-.p-delete:hover { color: var(--accent-strong); background: rgba(255, 255, 255, 0.12); }
+.p-pin:hover, .p-delete:hover { color: var(--text-primary); background: rgba(255, 255, 255, 0.06); }
+.p-delete:hover { color: var(--accent-strong); background: rgba(255, 255, 255, 0.1); }
 .p-pin:active, .p-delete:active { transform: scale(0.85); }
 .p-pin.is-pinned { color: var(--accent-strong); opacity: 1; }
 .p-pin.is-pinned:hover { transform: scale(1.12) rotate(-8deg); }
@@ -620,9 +622,6 @@ button { font-family: var(--font-sans); }
 /* ---------------- project detail ---------------- */
 .project-detail { margin-top: 4px; }
 
-/* "Back to Projects" — the escape hatch out of the detail card. Ghost-text
-   style rather than a boxed button: it's a navigation affordance, not an
-   action, so it shouldn't compete visually with Check for Updates. */
 .pd-close-btn {
   display: inline-flex;
   align-items: center;
@@ -635,7 +634,7 @@ button { font-family: var(--font-sans); }
   cursor: pointer;
   padding: 0;
   margin-bottom: 14px;
-  transition: color var(--dur-base) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+  transition: color var(--dur-hover) var(--ease), transform var(--dur-press) var(--ease);
 }
 .pd-close-btn:hover { color: var(--text-primary); transform: translateX(-2px); }
 .pd-close-btn:active { transform: translateX(-2px) scale(0.96); }
@@ -670,17 +669,17 @@ button { font-family: var(--font-sans); }
   font-weight: 500;
   cursor: pointer;
   flex-shrink: 0;
-  transition: background var(--dur-base) var(--ease-out),
-              color var(--dur-base) var(--ease-out),
-              border-color var(--dur-base) var(--ease-out),
-              transform var(--dur-fast) var(--ease-out);
+  transition: background var(--dur-hover) var(--ease),
+              color var(--dur-hover) var(--ease),
+              border-color var(--dur-hover) var(--ease),
+              transform var(--dur-press) var(--ease);
 }
 .pin-btn:hover { border-color: var(--glass-border-strong); transform: translateY(-1px); }
 .pin-btn.is-pinned {
   color: var(--accent-ink);
   background: linear-gradient(135deg, #ffffff, #d8d9dc);
   border-color: transparent;
-  box-shadow: 0 4px 14px var(--accent-glow);
+  box-shadow: 0 4px 12px var(--accent-glow);
 }
 
 .pd-status-row { display: flex; flex-direction: column; gap: 4px; margin: 10px 0 14px; }
@@ -701,14 +700,14 @@ button { font-family: var(--font-sans); }
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   padding: 3px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  transition: color var(--dur-base) var(--ease-out);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.035);
+  transition: color var(--dur-hover) var(--ease);
 }
 .history-entry:hover { color: var(--text-secondary); }
 
-/* ---------------- Pulse (Tab 1): contribution calendar + streak ---------------- */
+/* ---------------- Pulse (Tab 1) ---------------- */
 .gh-overview-card { padding: 14px; }
-.gh-overview-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; gap: 8px; }
+.gh-overview-header { margin-bottom: 12px; }
 .gh-overview-header h3 {
   font-size: 11px;
   font-weight: 600;
@@ -717,15 +716,12 @@ button { font-family: var(--font-sans); }
   text-transform: uppercase;
   letter-spacing: 0.4px;
 }
-.pulse-last-updated { font-size: 10px; margin: 0; flex-shrink: 0; }
 
-/* Update CTA — deliberately enlarged and full-width: this is the one
-   action on this tab, so it should read as an inviting primary action
-   rather than a tucked-away icon button. Three visual states, none of
-   which use color (per the monochrome rule): idle, is-loading (spinning
-   icon, "Updating..." label), is-success (checkmark icon, brief scale
-   pulse, "Updated" label, auto-reverts). */
-.pulse-update-btn { margin-bottom: 14px; }
+/* Update CTA: freshness caption now merged in as a right-aligned unit
+   inside the same button, instead of a separate header element. FIX:
+   18px bottom margin — this button previously had none, and read as
+   overlapping the JUN/JUL/AUG month row directly beneath it. */
+.pulse-update-btn { margin-bottom: 18px; justify-content: flex-start; }
 .pulse-update-icon {
   width: 14px;
   height: 14px;
@@ -739,29 +735,53 @@ button { font-family: var(--font-sans); }
   mask-position: center;
   -webkit-mask-size: contain;
   mask-size: contain;
-  transition: transform var(--dur-slow) var(--ease-out);
+  transition: transform var(--dur-motion) var(--ease);
 }
-.pulse-update-btn:hover .pulse-update-icon { transform: rotate(180deg); }
-.pulse-update-btn.is-loading .pulse-update-icon { animation: spin 0.9s linear infinite; }
+.pulse-update-btn:hover .pulse-update-icon { transform: rotate(160deg); }
+.pulse-update-btn.is-loading .pulse-update-icon { animation: spin 0.8s linear infinite; }
 .pulse-update-btn.is-success .pulse-update-icon {
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 8.5l3.2 3.2L13 4.5' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 8.5l3.2 3.2L13 4.5' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   animation: none;
 }
-.pulse-update-btn.is-success { animation: update-success-pulse var(--dur-slow) var(--ease-spring); }
+.pulse-update-btn.is-success { animation: update-success-pulse var(--dur-motion) var(--ease-spring); }
 @keyframes update-success-pulse {
   0% { transform: scale(1); }
-  40% { transform: scale(1.015); }
+  40% { transform: scale(1.012); }
   100% { transform: scale(1); }
 }
+.pulse-last-updated {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  opacity: 0.55;
+  font-variant-numeric: tabular-nums;
+}
+.pulse-live-dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--accent-ink);
+  position: relative;
+}
+.pulse-live-dot::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1px solid var(--accent-ink);
+  opacity: 0.5;
+  animation: live-pulse 2.6s ease-out infinite;
+}
+@keyframes live-pulse {
+  0% { transform: scale(0.6); opacity: 0.6; }
+  100% { transform: scale(1.8); opacity: 0; }
+}
 
-/* Contribution calendar: columns = weeks, rows = Sun..Sat, binary states
-   only — filled (contributed) vs dim (no contribution). Custom drag/swipe
-   scroll (mouse + touch) replaces the native scrollbar entirely: no
-   scrollbar track is shown, edges fade via mask-image instead of a hard
-   cut, and the wrap is defaulted to its far-right scroll position (today /
-   current month) on every render via JS, rather than opening on the
-   oldest (year-ago) end. */
+/* Calendar: month-label row scrolls WITH the grid (both live inside
+   .gh-cal-inner so they move together), drag-scroll physics live in
+   pulseView.js (momentum + friction decay). */
 .gh-cal-wrap {
   overflow-x: auto;
   overflow-y: hidden;
@@ -776,14 +796,29 @@ button { font-family: var(--font-sans); }
 }
 .gh-cal-wrap::-webkit-scrollbar { display: none; }
 .gh-cal-wrap.is-dragging { cursor: grabbing; }
+.gh-cal-inner { width: max-content; }
+.gh-cal-months { display: flex; gap: 3px; margin-bottom: 6px; }
+.gh-cal-month-label {
+  width: 10px; /* matches one .gh-cal-col width so labels align to the week they belong to */
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+  overflow: visible;
+}
 .gh-cal-grid { display: flex; gap: 3px; justify-content: flex-start; width: max-content; }
 .gh-cal-col { display: flex; flex-direction: column; gap: 3px; }
 .gh-cal-cell { width: 10px; height: 10px; border-radius: 2.5px; flex-shrink: 0; pointer-events: none; }
-.gh-cal-cell.is-active { background: var(--accent-strong); box-shadow: 0 0 5px var(--accent-glow); }
-.gh-cal-cell.is-empty { background: rgba(255, 255, 255, 0.06); border: 1px solid var(--glass-border); }
+.gh-cal-cell.is-active { background: var(--accent-strong); }
+.gh-cal-cell.is-empty { background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); }
 .gh-cal-cell.is-blank { background: transparent; }
+/* Today's cell: the ONE place besides the streak stat that carries the
+   ember accent — a ring, not a fill, so it reads as "you are here"
+   rather than competing with the is-active fill state. */
+.gh-cal-cell.is-today { box-shadow: 0 0 0 1.5px var(--ember); }
 
-/* Below-chart facts: current streak + this-year total, side by side. */
 .pulse-stats-row {
   display: flex;
   align-items: stretch;
@@ -794,6 +829,10 @@ button { font-family: var(--font-sans); }
 .pulse-stat { flex: 1; text-align: center; }
 .pulse-stat-divider { width: 1px; background: var(--glass-border); margin: 2px 6px; }
 .pulse-stat-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   font-size: 10px;
   font-weight: 600;
   color: var(--text-secondary);
@@ -801,6 +840,7 @@ button { font-family: var(--font-sans); }
   letter-spacing: 0.4px;
   margin-bottom: 5px;
 }
+.pulse-flame-icon { width: 11px; height: 11px; color: var(--ember); flex-shrink: 0; }
 .pulse-stat-value {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
@@ -809,24 +849,43 @@ button { font-family: var(--font-sans); }
   color: var(--accent-strong);
   line-height: 1.1;
 }
+.pulse-stat-value-flame { color: var(--ember); }
 .pulse-stat-note { font-size: 10px; color: var(--text-tertiary); margin-top: 4px; min-height: 12px; line-height: 1.4; }
 
-/* Bottom-of-tab: the single most recently pushed repo on the account. */
+/* Last Pushed: now a real tappable row — icon box, meta, and a chevron
+   that all respond on hover/press. Previously bare text/icon with no
+   feedback state at all. */
 .pulse-last-pushed { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--glass-border); }
+.plp-head { margin-bottom: 8px; }
 .plp-label {
   font-size: 11px;
   font-weight: 600;
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.4px;
-  margin-bottom: 8px;
 }
 .plp-body {
-  background: rgba(255, 255, 255, 0.03);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.025);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
-  padding: 10px 12px;
+  padding: 10px 10px 10px 10px;
+  cursor: pointer;
+  transition: background var(--dur-hover) var(--ease),
+              border-color var(--dur-hover) var(--ease),
+              transform var(--dur-press) var(--ease);
 }
+.plp-body:hover { background: var(--glass-fill-hover); border-color: var(--glass-border-strong); transform: translateX(1px); }
+.plp-body:active { transform: scale(0.995); }
+.plp-icon {
+  width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.04); border: 1px solid var(--glass-border);
+  display: flex; align-items: center; justify-content: center;
+}
+.plp-icon svg { width: 13px; height: 13px; color: var(--text-secondary); }
+.plp-content { flex: 1; min-width: 0; }
 .plp-repo-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .plp-repo-name {
   font-size: 12.5px;
@@ -848,14 +907,19 @@ button { font-family: var(--font-sans); }
   flex-shrink: 0;
 }
 .plp-desc {
-  margin: 6px 0 0;
+  margin: 5px 0 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.plp-meta-row { display: flex; gap: 12px; margin-top: 8px; }
+.plp-meta-row { display: flex; gap: 12px; margin-top: 6px; }
+.plp-chevron {
+  width: 14px; height: 14px; flex-shrink: 0; color: var(--text-tertiary);
+  transition: transform var(--dur-hover) var(--ease), color var(--dur-hover) var(--ease);
+}
+.plp-body:hover .plp-chevron { transform: translateX(2px); color: var(--text-secondary); }
 
-/* ---------------- Settings: token vault UI ---------------- */
+/* ---------------- Settings ---------------- */
 .settings-btn-row { display: flex; gap: 8px; margin-top: 4px; }
 .settings-btn-row .btn-ghost { flex: 1; }
 .settings-btn-row .btn-primary { flex: 1; width: auto; }
@@ -869,9 +933,6 @@ button { font-family: var(--font-sans); }
   padding-top: 12px;
   border-top: 1px solid var(--glass-border);
 }
-/* When the token entry group is hidden (already connected), the connected
-   row is the only content in the card — drop its top divider/spacing so it
-   doesn't look like a stray leftover section. */
 #settings-token-card.is-connected .settings-connected-row {
   border-top: none;
   margin-top: 0;
