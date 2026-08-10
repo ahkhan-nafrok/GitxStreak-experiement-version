@@ -12,14 +12,19 @@
 // here is now just this same tracked list's unpinned tail, sorted by commit
 // recency (sortProjectsForList already does this).
 //
-// UI/UX pass (this session): added a "back to list" affordance on the
-// project-detail card (#pd-close-btn) so opening a repo no longer feels
-// like a one-way door, plus a small list header with a live tracked-repo
-// count for quicker at-a-glance context.
-import { getLatestCommit, getRepoMeta, parseRepoInput } from "./lib/github.js";
+// This tab is deliberately NOT gated on having a token — public repos work
+// fully unauthenticated, and browsing/pinning/adding never touch GitHub at
+// all. The only place a token matters is the actual "Check for Updates"
+// network call, which now distinguishes an auth failure (GitHubAuthError,
+// e.g. an expired/revoked token) from any other error and surfaces it as a
+// dismissible toast pointing at Settings, instead of a plain inline error
+// line — nothing here blocks or locks based on token state.
+import { getLatestCommit, getRepoMeta, parseRepoInput, GitHubAuthError } from "./lib/github.js";
 import { createProjectStore } from "./lib/projectStore.js";
 import { chromeStorageAdapter } from "./lib/storageAdapter.js";
 import { getToken } from "./lib/tokenVault.js";
+import { setAuthFailed } from "./lib/authState.js";
+import { showToast } from "./toast.js";
 
 const store = createProjectStore(chromeStorageAdapter);
 
@@ -286,7 +291,18 @@ export function initProjectsView() {
     } catch (e) {
       await renderList();
       await openProject(activeProjectId);
-      setStatus(pdStatus, e.message, true);
+      if (e instanceof GitHubAuthError) {
+        await setAuthFailed(chromeStorageAdapter, true);
+        window.dispatchEvent(new CustomEvent("gitstreak:auth-changed"));
+        setStatus(pdStatus, "");
+        showToast("GitHub rejected your token — reconnect it in Settings for private-repo checks.", {
+          actionLabel: "Open Settings",
+          onAction: () => window.dispatchEvent(new CustomEvent("gitstreak:open-settings")),
+          key: "projects-auth-failed",
+        });
+      } else {
+        setStatus(pdStatus, e.message, true);
+      }
     } finally {
       pdRefreshBtn.disabled = false;
     }
