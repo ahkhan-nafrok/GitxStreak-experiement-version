@@ -15,10 +15,11 @@
     </div>
   </header>
 
-  <!-- Nav is now a single visual pill: Pulse/Projects tabs + the Settings
-       gear all live inside one bordered container instead of two
-       disconnected elements. The gear's full-swap behavior (popup.js) is
-       unchanged — only the container around it changed. -->
+  <!-- Nav is a single visual pill: Pulse/Projects tabs + the Settings
+       gear all live inside one bordered container. The gear's full-swap
+       behavior lives in popup.js. The badge dot (new) shows whenever
+       there's no token connected OR the saved token has started failing
+       auth — visible before the user even opens a tab. -->
   <nav class="nav-shell">
     <div class="tabs-main" id="tabs-main" role="tablist">
       <button class="tab-btn active" data-tab="pulse" role="tab" aria-selected="true">
@@ -33,6 +34,7 @@
     <span id="settings-nav-label" class="settings-nav-label" hidden>Settings</span>
     <button id="settings-toggle-btn" class="settings-toggle-btn" type="button" aria-label="Settings" title="Settings">
       <span class="settings-toggle-icon" aria-hidden="true"></span>
+      <span id="settings-badge-dot" class="settings-badge-dot" hidden aria-hidden="true"></span>
     </button>
   </nav>
 
@@ -43,11 +45,9 @@
         <h3>Last 12 Months</h3>
       </div>
 
-      <!-- Update CTA + freshness caption are now one unit: the "Updated
-           Xm ago" fact used to sit alone in the card header, disconnected
-           from the button that causes it to change. It now lives inside
-           the button itself, right-aligned, so it's one glance instead of
-           two separate facts to reconcile. -->
+      <!-- Update CTA + freshness caption are one unit: the "Updated Xm
+           ago" fact lives inside the button itself, right-aligned, so
+           it's one glance instead of two separate facts to reconcile. -->
       <button id="pulse-refresh-btn" class="btn-primary pulse-update-btn" type="button">
         <span class="pulse-update-icon" aria-hidden="true"></span>
         <span id="pulse-update-btn-label">Click to Update</span>
@@ -56,8 +56,12 @@
         </span>
       </button>
 
+      <!-- First-run / disconnected empty state, now with a real CTA
+           instead of just hint text — one click straight into Settings
+           with the token input focused. -->
       <div id="pulse-token-prompt" class="empty-state" hidden>
-        <p class="hint">Add a GitHub token in Settings to see your contribution activity here.</p>
+        <p class="hint">Connect your GitHub account to see your contribution activity, streak, and recent pushes here.</p>
+        <button id="pulse-token-cta" class="btn-primary pulse-token-cta" type="button">Connect GitHub</button>
       </div>
 
       <div id="pulse-calendar-wrap" class="gh-cal-wrap" hidden>
@@ -157,6 +161,13 @@
   <!-- ===================== SETTINGS (gear-toggled full swap) ===================== -->
   <section id="tab-settings" class="tab-panel">
     <div id="settings-token-card" class="glass-card">
+      <!-- Intro banner: only shown while disconnected. Copy differs
+           between a true first-run visit and a revisit after revoking —
+           see settingsView.js / lib/authState.js (ghHasEverConnected). -->
+      <div id="settings-intro-banner" class="settings-intro-banner" hidden>
+        <p id="settings-intro-text" class="hint"></p>
+      </div>
+
       <div id="settings-token-entry">
         <div class="field">
           <label for="settings-token-input">GitHub token</label>
@@ -197,6 +208,15 @@
       </p>
     </div>
   </section>
+
+  <!-- Shared, non-blocking toast — used for "your token stopped working"
+       notices from Pulse's Update button and Projects' Check-for-Updates
+       button. aria-live so screen readers announce it even though it
+       starts hidden and only becomes visible later. -->
+  <div id="app-toast" class="app-toast" hidden role="status" aria-live="polite">
+    <span id="app-toast-msg" class="app-toast-msg"></span>
+    <button id="app-toast-action" class="app-toast-action" type="button" hidden></button>
+  </div>
 
   <script type="module" src="popup.js"></script>
 </body>
