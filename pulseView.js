@@ -4,18 +4,22 @@
 // token (GraphQL has no unauthenticated tier), read through the vault —
 // never plaintext.
 //
-// Redesign pass (this session): drag-scroll now has real momentum instead
-// of stopping dead on release (see enableDragScroll below — this was the
-// single biggest source of the "clunky" feel). Added a month-label row
-// that scrolls in sync with the grid. Today's cell gets a ring in the
-// ember accent (the ONLY other place besides the streak stat that uses
-// color — everything else stays monochrome, per the locked Theme B rule).
-// The "Updated Xm ago" freshness caption now renders into a nested span
-// inside the Update button itself rather than a separate header element —
-// see renderLastUpdated().
-import { ghGraphQL, getMostRecentlyPushedRepo } from "./lib/github.js";
+// This pass: cached data now renders BEFORE any staleness/fetch logic runs
+// — previously a stale cache skipped straight into the fetch attempt with
+// nothing shown first, so a failed fetch (e.g. an expired token) left the
+// UI blank even with good cached data sitting in storage. Now the last
+// known calendar/streak/stats/last-pushed always render immediately, and a
+// subsequent auth failure (GitHubAuthError) leaves that render untouched —
+// it never wipes the cache, just flags it as stale-because-of-auth and
+// (only on an explicit Update click, not a silent background refresh)
+// shows a toast pointing at Settings. Also added the empty-state
+// "Connect GitHub" CTA, wired to the same open-settings event popup.js
+// listens for.
+import { ghGraphQL, getMostRecentlyPushedRepo, GitHubAuthError } from "./lib/github.js";
 import { chromeStorageAdapter } from "./lib/storageAdapter.js";
 import { getToken } from "./lib/tokenVault.js";
+import { setAuthFailed } from "./lib/authState.js";
+import { showToast } from "./toast.js";
 import {
   getRolling12MonthRange,
   CONTRIBUTION_QUERY,
@@ -32,6 +36,7 @@ const MONTH_NAMES = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SE
 
 export function initPulseView() {
   const tokenPrompt = document.getElementById("pulse-token-prompt");
+  const tokenCtaBtn = document.getElementById("pulse-token-cta");
   const calendarWrap = document.getElementById("pulse-calendar-wrap");
   const monthsEl = document.getElementById("pulse-calendar-months");
   const gridEl = document.getElementById("pulse-calendar-grid");
@@ -202,16 +207,24 @@ export function initPulseView() {
 
     const stored = await chromeStorageAdapter.get([CACHE_KEY]);
     const cache = stored[CACHE_KEY] || null;
-    const stale = isContributionCacheStale(cache) || (cache && !cache.lastPushedRepo);
 
-    if (!forceRefresh && !stale) {
+    // Cached data renders FIRST, unconditionally, before any freshness
+    // check or network call. A stale cache used to skip straight to the
+    // fetch attempt with nothing rendered, so a failed fetch (expired
+    // token, offline, rate limit) left the UI blank even with perfectly
+    // good data sitting in storage.
+    if (cache) {
       renderAll(cache);
+    }
+
+    const stale = isContributionCacheStale(cache) || (cache && !cache.lastPushedRepo);
+    if (!forceRefresh && !stale) {
       setStatus("");
       return;
     }
 
     setUpdateBtnState("loading");
-    setStatus("Fetching your latest activity...");
+    setStatus(cache ? "" : "Fetching your latest activity...");
     try {
       const range = getRolling12MonthRange();
       const [contribData, lastPushedRepo] = await Promise.all([
@@ -231,27 +244,46 @@ export function initPulseView() {
       renderAll(newCache);
       setStatus("");
       setUpdateBtnState("success");
+      await setAuthFailed(chromeStorageAdapter, false);
+      window.dispatchEvent(new CustomEvent("gitstreak:auth-changed"));
     } catch (e) {
-      setStatus(e.message, true);
-      setUpdateBtnState("idle");
+      if (e instanceof GitHubAuthError) {
+        await setAuthFailed(chromeStorageAdapter, true);
+        window.dispatchEvent(new CustomEvent("gitstreak:auth-changed"));
+        setUpdateBtnState("idle");
+        setStatus("");
+        // The cache already rendered above and is left exactly as-is.
+        // Toast only fires on an explicit click (forceRefresh) — a silent
+        // background staleness refresh failing on every popup open would
+        // spam this on a dead token, which isn't the trigger point asked
+        // for; the click is.
+        if (forceRefresh) {
+          showToast("Your GitHub token stopped working — reconnect it to keep this up to date.", {
+            actionLabel: "Open Settings",
+            onAction: () => window.dispatchEvent(new CustomEvent("gitstreak:open-settings")),
+            key: "pulse-auth-failed",
+          });
+        }
+      } else {
+        setStatus(e.message, true);
+        setUpdateBtnState("idle");
+      }
     }
   }
 
   enableDragScroll(calendarWrap);
   refreshBtn.addEventListener("click", () => load(true));
+  tokenCtaBtn?.addEventListener("click", () => window.dispatchEvent(new CustomEvent("gitstreak:open-settings")));
 
   load(false);
 }
 
 /** Click-and-drag / touch-swipe horizontal scroll for the calendar wrap,
- * now WITH momentum: on release, the last-known drag velocity decays via
+ * with momentum: on release, the last-known drag velocity decays via
  * friction into continued scrolling, eased out — the same feel as a
- * native scroll surface (and GitHub's own contribution graph). The
- * previous version was strict 1:1 drag with zero carry-over, so motion
- * stopped dead the instant the pointer lifted; that abruptness was the
- * single largest contributor to the "clunky" feedback this redesign was
- * asked to fix. Mouse listeners stay on `window` for move/up so a drag
- * leaving the element's bounds doesn't get stuck "down." */
+ * native scroll surface (and GitHub's own contribution graph). Mouse
+ * listeners stay on `window` for move/up so a drag leaving the element's
+ * bounds doesn't get stuck "down." */
 function enableDragScroll(el) {
   let isDown = false;
   let startX = 0;
