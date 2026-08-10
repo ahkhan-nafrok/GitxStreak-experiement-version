@@ -4,17 +4,22 @@
 // test-connection before save, revoke wipes both the encrypted blob and
 // the vault key.
 //
-// UI/UX pass (this session): once a token is saved, the entire entry group
-// (label + input + hint + Test/Save buttons + scopes readout) is hidden —
-// there is nothing to "re-enter" while a token is already stored, so
-// showing that form was dead weight. Only the "Connected as ghp_••••" row
-// + Revoke Locally button show while connected. The entry group reappears
-// automatically once the token is revoked.
+// This pass: added an intro banner that reads differently depending on
+// whether this install has ever connected a token before (first-run vs.
+// revisiting-after-disconnect), and wired up the events popup.js listens
+// for — 'gitstreak:auth-changed' (badge dot refresh) and
+// 'gitstreak:token-saved' (forces the return-from-Settings destination to
+// Pulse). Also shows "last check failed, reconnect" on the connected row
+// when ghTokenAuthFailed is set, without hiding the row or blocking
+// anything — this is a soft-degrade notice, not a lock.
 import { chromeStorageAdapter } from "./lib/storageAdapter.js";
 import { saveToken, getToken, revokeToken, maskToken, testConnection } from "./lib/tokenVault.js";
+import { getAuthFailed, setAuthFailed, getHasEverConnected, setHasEverConnected } from "./lib/authState.js";
 
 export function initSettingsView() {
   const tokenCard = document.getElementById("settings-token-card");
+  const introBanner = document.getElementById("settings-intro-banner");
+  const introText = document.getElementById("settings-intro-text");
   const tokenEntry = document.getElementById("settings-token-entry");
   const tokenInput = document.getElementById("settings-token-input");
   const testBtn = document.getElementById("settings-test-btn");
@@ -41,11 +46,29 @@ export function initSettingsView() {
     tokenEntry.hidden = isConnected;
     connectedRow.hidden = !isConnected;
 
+    // Intro banner: only relevant while disconnected. Once connected,
+    // there's nothing to onboard them into — hide it outright rather than
+    // leaving stale first-run copy sitting above a working connection.
+    if (isConnected) {
+      introBanner.hidden = true;
+    } else {
+      const everConnected = await getHasEverConnected(chromeStorageAdapter);
+      introText.textContent = everConnected
+        ? "Your GitHub token was removed or stopped working. Add a new one below to reconnect."
+        : "Welcome to GITSTREAK — connect a GitHub token to see your contribution activity, streak, and tracked repos.";
+      introBanner.hidden = false;
+    }
+
     if (!isConnected) {
       saveBtn.disabled = true;
       return;
     }
-    connectedLabel.textContent = `Connected as ${maskToken(token)}`;
+
+    const authFailed = await getAuthFailed(chromeStorageAdapter);
+    connectedRow.classList.toggle("is-authfailed", authFailed);
+    connectedLabel.textContent = authFailed
+      ? `Connected as ${maskToken(token)} — last check failed, reconnect`
+      : `Connected as ${maskToken(token)}`;
   }
 
   testBtn.addEventListener("click", async () => {
@@ -92,11 +115,15 @@ export function initSettingsView() {
     setStatus("Saving...");
     try {
       await saveToken(chromeStorageAdapter, raw);
+      await setAuthFailed(chromeStorageAdapter, false); // a fresh save always clears the failing-token flag
+      await setHasEverConnected(chromeStorageAdapter, true); // permanent — never cleared by revoke
       tokenInput.value = "";
       lastValidated = null;
       scopesEl.hidden = true;
       setStatus("Token saved.");
       await refreshConnectedState();
+      window.dispatchEvent(new CustomEvent("gitstreak:auth-changed"));
+      window.dispatchEvent(new CustomEvent("gitstreak:token-saved")); // popup.js routes back to Pulse
     } catch (e) {
       setStatus(e.message, true);
     } finally {
@@ -110,8 +137,13 @@ export function initSettingsView() {
     }
     try {
       await revokeToken(chromeStorageAdapter);
+      await setAuthFailed(chromeStorageAdapter, false); // no token means "no auth-failed state" either
+      // Deliberately NOT clearing hasEverConnected here — this is what
+      // makes the intro banner say "reconnect" instead of "welcome" on
+      // the next visit to Settings.
       setStatus("Token removed locally.");
       await refreshConnectedState();
+      window.dispatchEvent(new CustomEvent("gitstreak:auth-changed"));
     } catch (e) {
       setStatus(e.message, true);
     }
