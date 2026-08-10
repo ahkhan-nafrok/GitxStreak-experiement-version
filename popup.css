@@ -1,35 +1,46 @@
-/* popup.css — GITSTREAK design system, v2
+/* popup.css — GITSTREAK design system, v3
    Theme B locked: monochrome base + one ember accent (#FF6A3D), scoped to
    exactly three things — the streak flame icon, the streak number, and a
    ring on today's calendar cell. Nothing else in the app uses color.
 
-   This pass (redesign session):
-     - "Vercel dark" pass: true #000 base, blur pulled from 22px to 10px
-       (flatter matte panels instead of heavy frosted glass), radii
-       tightened, ambient glow reduced to one faint corner instead of two.
+   v3 (this pass — first-run/onboarding + degraded-token UX):
+     - Pulse's empty state gets a real CTA button (.pulse-token-cta),
+       not just hint text.
+     - Settings gets an intro banner (.settings-intro-banner) shown only
+       while disconnected, with copy that differs between true first-run
+       and "reconnect after revoke" (logic lives in settingsView.js).
+     - The settings gear gets a small pulsing badge dot
+       (.settings-badge-dot) whenever there's no token or the saved token
+       has started failing auth — reuses the same pulse-attn animation
+       already defined for the Projects "not checked yet" badge, so
+       "needs your attention" reads as one consistent visual language
+       instead of two.
+     - A shared, dismissible, non-blocking toast (.app-toast) for
+       "your token stopped working" notices from Pulse/Projects.
+     - .settings-connected-row.is-authfailed: bolds the connected label
+       when the saved token is present but failing — no color used, per
+       the locked monochrome rule; weight carries the signal instead.
+
+   v2 (prior pass — "Vercel dark"):
+     - true #000 base, blur pulled from 22px to 10px (flatter matte
+       panels instead of heavy frosted glass), radii tightened, ambient
+       glow reduced to one faint corner instead of two.
      - FIX: .pulse-update-btn had no margin-bottom, so it read as
        overlapping the month-label row directly beneath it. Fixed with
-       18px of space (see .pulse-update-btn below).
+       18px of space.
      - Motion unified onto ONE easing curve (--ease) and a tighter set of
-       durations. The old --dur-slow (0.6s) was shared by three unrelated
-       animations (icon spin-to-check, button shimmer sweep, success
-       pulse) firing at once on hover/click — that's a good chunk of what
-       read as "clunky." Durations are now purpose-scoped, not shared.
-     - Nav is one visual pill: Pulse/Projects tabs + the Settings gear now
-       share a single bordered container instead of two disconnected
-       floating elements with mismatched spacing.
-     - Update CTA and its "Updated Xm ago" freshness caption are merged
-       into one unit (caption now lives inside the button).
-     - Last Pushed is now a real tappable row: icon box, meta line,
-       chevron, all with hover/press feedback — it had none before.
-     - Project list rows get a hover-revealed chevron (pure CSS, ::after —
-       no DOM/JS changes, so projectsView.js and its tests are untouched).
-     - Calendar drag-scroll physics now live in pulseView.js (momentum +
-       friction decay) — this file only styles the result.
-
-   Unchanged on purpose: Settings tab structure/logic, projectsView.js and
-   settingsView.js were not touched at all — only new CSS classes were
-   added that layer on top of their existing markup. */
+       durations, purpose-scoped rather than shared across unrelated
+       animations.
+     - Nav is one visual pill: Pulse/Projects tabs + the Settings gear
+       share a single bordered container.
+     - Update CTA and its "Updated Xm ago" freshness caption merged into
+       one unit (caption lives inside the button).
+     - Last Pushed is a real tappable row: icon box, meta line, chevron,
+       all with hover/press feedback.
+     - Project list rows get a hover-revealed chevron (pure CSS, ::after
+       — no DOM/JS changes).
+     - Calendar drag-scroll physics live in pulseView.js (momentum +
+       friction decay) — this file only styles the result. */
 
 :root {
   /* ---- surfaces: true black, flat matte panels ---- */
@@ -198,6 +209,7 @@ html, body {
 }
 
 .settings-toggle-btn {
+  position: relative; /* anchors the badge dot */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -247,6 +259,23 @@ html, body {
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M10 3 5 8l5 5' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
+/* Badge dot on the gear: no token connected, or a saved token has
+   started failing auth. Reuses the same pulse-attn animation as the
+   Projects "not checked yet" badge (defined further down) so "needs
+   attention" reads consistently across the app instead of introducing a
+   second visual language for the same concept. */
+.settings-badge-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent-strong);
+  box-shadow: 0 0 0 2px var(--bg-base);
+  animation: pulse-attn 2.4s var(--ease) infinite;
+}
+
 .tab-panel { display: none; position: relative; z-index: 1; padding: 0 14px 18px; }
 .tab-panel.active { display: block; animation: panel-in var(--dur-motion) var(--ease); }
 @keyframes panel-in {
@@ -265,6 +294,14 @@ html, body {
   transition: border-color var(--dur-hover) var(--ease);
   margin-bottom: 10px;
 }
+
+/* ---------------- Settings: intro banner (first-run vs. reconnect) ---------------- */
+.settings-intro-banner {
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--glass-border);
+}
+.settings-intro-banner .hint { color: var(--text-secondary); font-size: 11.5px; margin: 0; }
 
 /* ---------------- fields ---------------- */
 .field { margin-bottom: 12px; }
@@ -382,10 +419,6 @@ button { font-family: var(--font-sans); }
   overflow: hidden;
   isolation: isolate;
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.5) inset, 0 4px 14px rgba(0, 0, 0, 0.4);
-  /* Single easing curve, one duration per property — the old version had
-     background-position/box-shadow/transform each on a different
-     duration, all firing on the same hover, which read as slightly out
-     of sync. */
   transition: box-shadow var(--dur-hover) var(--ease),
               transform var(--dur-press) var(--ease);
 }
@@ -492,9 +525,6 @@ button { font-family: var(--font-sans); }
 .project-list-item:hover { background: var(--glass-fill-hover); transform: translateX(1px); }
 .project-list-item:active { transform: scale(0.995); }
 
-/* Chevron affordance — purely decorative CSS, no markup change, so
-   projectsView.js and its tests stay exactly as they were. Reveals on
-   hover/focus-within like the pin/delete icons already did. */
 .project-list-item::after {
   content: "";
   position: absolute;
@@ -619,6 +649,11 @@ button { font-family: var(--font-sans); }
 .empty-state .icon { width: 22px; height: 22px; opacity: 0.5; }
 .empty-state .hint { margin: 0; }
 
+/* Pulse's first-run/disconnected CTA — sits inside the same empty-state
+   block, auto width so it doesn't stretch edge-to-edge like the primary
+   action buttons elsewhere. */
+.pulse-token-cta { margin-top: 10px; width: auto; padding-left: 20px; padding-right: 20px; }
+
 /* ---------------- project detail ---------------- */
 .project-detail { margin-top: 4px; }
 
@@ -717,10 +752,6 @@ button { font-family: var(--font-sans); }
   letter-spacing: 0.4px;
 }
 
-/* Update CTA: freshness caption now merged in as a right-aligned unit
-   inside the same button, instead of a separate header element. FIX:
-   18px bottom margin — this button previously had none, and read as
-   overlapping the JUN/JUL/AUG month row directly beneath it. */
 .pulse-update-btn { margin-bottom: 18px; justify-content: flex-start; }
 .pulse-update-icon {
   width: 14px;
@@ -779,9 +810,6 @@ button { font-family: var(--font-sans); }
   100% { transform: scale(1.8); opacity: 0; }
 }
 
-/* Calendar: month-label row scrolls WITH the grid (both live inside
-   .gh-cal-inner so they move together), drag-scroll physics live in
-   pulseView.js (momentum + friction decay). */
 .gh-cal-wrap {
   overflow-x: auto;
   overflow-y: hidden;
@@ -799,7 +827,7 @@ button { font-family: var(--font-sans); }
 .gh-cal-inner { width: max-content; }
 .gh-cal-months { display: flex; gap: 3px; margin-bottom: 6px; }
 .gh-cal-month-label {
-  width: 10px; /* matches one .gh-cal-col width so labels align to the week they belong to */
+  width: 10px;
   font-size: 9.5px;
   font-weight: 700;
   color: var(--text-tertiary);
@@ -814,9 +842,6 @@ button { font-family: var(--font-sans); }
 .gh-cal-cell.is-active { background: var(--accent-strong); }
 .gh-cal-cell.is-empty { background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); }
 .gh-cal-cell.is-blank { background: transparent; }
-/* Today's cell: the ONE place besides the streak stat that carries the
-   ember accent — a ring, not a fill, so it reads as "you are here"
-   rather than competing with the is-active fill state. */
 .gh-cal-cell.is-today { box-shadow: 0 0 0 1.5px var(--ember); }
 
 .pulse-stats-row {
@@ -852,9 +877,6 @@ button { font-family: var(--font-sans); }
 .pulse-stat-value-flame { color: var(--ember); }
 .pulse-stat-note { font-size: 10px; color: var(--text-tertiary); margin-top: 4px; min-height: 12px; line-height: 1.4; }
 
-/* Last Pushed: now a real tappable row — icon box, meta, and a chevron
-   that all respond on hover/press. Previously bare text/icon with no
-   feedback state at all. */
 .pulse-last-pushed { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--glass-border); }
 .plp-head { margin-bottom: 8px; }
 .plp-label {
@@ -938,6 +960,9 @@ button { font-family: var(--font-sans); }
   margin-top: 0;
   padding-top: 0;
 }
+/* Connected but the saved token is currently failing auth — weight
+   carries the signal, no color used, per the locked monochrome rule. */
+.settings-connected-row.is-authfailed #settings-connected-label { color: var(--text-primary); font-weight: 600; }
 
 .settings-security-note h3 {
   font-size: 11px;
@@ -948,3 +973,38 @@ button { font-family: var(--font-sans); }
   letter-spacing: 0.4px;
 }
 .settings-security-note .hint { margin-top: 6px; }
+
+/* ---------------- shared toast ---------------- */
+.app-toast {
+  position: fixed;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #141414;
+  border: 1px solid var(--glass-border-strong);
+  border-radius: var(--radius-md);
+  padding: 11px 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity var(--dur-motion) var(--ease), transform var(--dur-motion) var(--ease);
+}
+.app-toast.is-visible { opacity: 1; transform: translateY(0); }
+.app-toast-msg { flex: 1; font-size: 11.5px; color: var(--text-primary); line-height: 1.4; }
+.app-toast-action {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--dur-hover) var(--ease), border-color var(--dur-hover) var(--ease);
+}
+.app-toast-action:hover { background: var(--glass-fill-hover); border-color: var(--glass-border-strong); }
