@@ -816,8 +816,14 @@ button { font-family: var(--font-sans); }
   cursor: grab;
   scrollbar-width: none;
   -ms-overflow-style: none;
-  -webkit-mask-image: linear-gradient(to right, transparent 0, black 14px, black calc(100% - 14px), transparent 100%);
-  mask-image: linear-gradient(to right, transparent 0, black 14px, black calc(100% - 14px), transparent 100%);
+  /* Fade ONLY the left edge — that's the only direction with more
+     content to scroll to. The right edge is always today's column
+     (the actual end of the rolling-12-month data, not a scroll
+     boundary), so it must never fade — that was hiding the current
+     week, including the ember "today" ring, behind the same gradient
+     meant as a scroll hint. */
+  -webkit-mask-image: linear-gradient(to right, transparent 0, black 14px, black 100%);
+  mask-image: linear-gradient(to right, transparent 0, black 14px, black 100%);
   padding: 2px 0 6px;
   user-select: none;
   -webkit-user-select: none;
