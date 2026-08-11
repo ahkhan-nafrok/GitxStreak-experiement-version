@@ -830,7 +830,7 @@ button { font-family: var(--font-sans); }
 }
 .gh-cal-wrap::-webkit-scrollbar { display: none; }
 .gh-cal-wrap.is-dragging { cursor: grabbing; }
-.gh-cal-inner { width: max-content; }
+.gh-cal-inner { width: max-content; padding-right: 4px; }
 .gh-cal-months { display: flex; gap: 3px; margin-bottom: 6px; }
 .gh-cal-month-label {
   width: 10px;
