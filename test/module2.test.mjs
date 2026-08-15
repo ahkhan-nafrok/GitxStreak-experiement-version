@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createProjectStore, MAX_PINNED, MAX_HISTORY } from "../lib/projectStore.js";
+import { createProjectStore, MAX_PINNED, MAX_TRACKED, MAX_HISTORY } from "../lib/projectStore.js";
 
 let passed = 0;
 async function testAsync(name, fn) {
@@ -147,9 +147,6 @@ await testAsync(
   async () => {
     const store = createProjectStore(makeMockAdapter());
     await store.create("p9", "P9", "org/p9");
-    // A malformed GitHub response could hand back no sha at all — the
-    // reliability rules require this is NEVER treated as "no change",
-    // because undefined === undefined would falsely look like a match.
     await store.addCommitHistoryEntry("p9", { sha: null, commitDate: "2026-01-01T00:00:00.000Z" });
     await store.addCommitHistoryEntry("p9", { sha: undefined, commitDate: "2026-01-02T00:00:00.000Z" });
     const p = await store.get("p9");
@@ -326,6 +323,45 @@ await testAsync("projectStore: updateRepoMeta never touches commitHistory/lastCh
   const after = await store.get("p14");
   assert.deepEqual(after.commitHistory, before.commitHistory);
   assert.equal(after.lastCheckedAt, before.lastCheckedAt);
+});
+
+// --- MAX_TRACKED (10-repo ceiling, independent of MAX_PINNED) ---
+
+await testAsync(`projectStore: tracked-repo list is capped at MAX_TRACKED (${MAX_TRACKED})`, async () => {
+  const store = createProjectStore(makeMockAdapter());
+  for (let i = 0; i < MAX_TRACKED; i++) {
+    await store.create(`t${i}`, `T${i}`, `org/t${i}`);
+  }
+  await assert.rejects(
+    () => store.create("overflow-tracked", "Overflow", "org/overflow-tracked"),
+    /up to 10 repos/,
+    "the 11th tracked repo must be rejected"
+  );
+  const all = await store.list();
+  assert.equal(all.length, MAX_TRACKED, "list must still contain exactly MAX_TRACKED entries after the rejected create");
+});
+
+await testAsync("projectStore: MAX_TRACKED cap does not block pinning within an already-full list", async () => {
+  const store = createProjectStore(makeMockAdapter());
+  for (let i = 0; i < MAX_TRACKED; i++) {
+    await store.create(`f${i}`, `F${i}`, `org/f${i}`);
+  }
+  await store.setPinned("f0", true);
+  await store.setPinned("f1", true);
+  const all = await store.list();
+  assert.equal(all.filter((p) => p.pinned).length, 2);
+});
+
+await testAsync("projectStore: removing a tracked repo frees a slot under MAX_TRACKED", async () => {
+  const store = createProjectStore(makeMockAdapter());
+  for (let i = 0; i < MAX_TRACKED; i++) {
+    await store.create(`r${i}`, `R${i}`, `org/r${i}`);
+  }
+  await store.remove("r0");
+  await assert.doesNotReject(
+    () => store.create("r-new", "R New", "org/r-new"),
+    "removing one tracked repo must free a slot for a new one"
+  );
 });
 
 console.log(`\n${passed} test(s) passed total.`);
