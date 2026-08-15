@@ -1,17 +1,21 @@
 // settingsView.js
-// Settings panel — the token entry/test/revoke flow described in the
-// GITSTREAK security layer: masked input, never redisplayed in full,
-// test-connection before save, revoke wipes both the encrypted blob and
-// the vault key.
+// Settings panel — two ways to connect: GitHub Device Flow (primary,
+// "Connect GitHub" button) and a manual PAT-paste form (collapsed under
+// "Use a personal access token instead").
 //
-// This pass: added an intro banner that reads differently depending on
-// whether this install has ever connected a token before (first-run vs.
-// revisiting-after-disconnect), and wired up the events popup.js listens
-// for — 'gitstreak:auth-changed' (badge dot refresh) and
-// 'gitstreak:token-saved' (forces the return-from-Settings destination to
-// Pulse). Also shows "last check failed, reconnect" on the connected row
-// when ghTokenAuthFailed is set, without hiding the row or blocking
-// anything — this is a soft-degrade notice, not a lock.
+// Device Flow's actual polling is alarm-driven and storage-backed inside
+// background.js (see that file's header comment for why) — it saves the
+// token directly to the vault the moment GitHub approves, independent of
+// whether this popup is even open. This view's job is now just:
+//   (1) tell background.js to start a flow,
+//   (2) render whatever LIVE status background.js broadcasts, if this
+//       popup happens to be open at the time,
+//   (3) on init, ask background.js for any in-progress/unacked terminal
+//       status so a popup that missed live updates can resync, and
+//   (4) always call refreshConnectedState() — which reads the vault
+//       directly via getToken() — as the actual source of truth for
+//       "are we connected." This is what makes success work correctly
+//       even if this popup was fully closed for the entire approval wait.
 import { chromeStorageAdapter } from "./lib/storageAdapter.js";
 import { saveToken, getToken, revokeToken, maskToken, testConnection } from "./lib/tokenVault.js";
 import { getAuthFailed, setAuthFailed, getHasEverConnected, setHasEverConnected } from "./lib/authState.js";
@@ -30,6 +34,14 @@ export function initSettingsView() {
   const connectedLabel = document.getElementById("settings-connected-label");
   const scopesEl = document.getElementById("settings-scopes");
 
+  // Device Flow elements
+  const deviceConnectBtn = document.getElementById("settings-device-connect-btn");
+  const deviceStatusEl = document.getElementById("settings-device-status");
+  const deviceCodeEl = document.getElementById("settings-device-code");
+  const deviceCodeValueEl = deviceCodeEl?.querySelector(".device-code-value");
+  const deviceLinkEl = document.getElementById("settings-device-link");
+  const deviceCancelBtn = document.getElementById("settings-device-cancel-btn");
+
   let lastValidated = null; // { login, scopes, isFineGrained } from the most recent successful test-connection
 
   function setStatus(msg, isError = false) {
@@ -45,17 +57,15 @@ export function initSettingsView() {
     tokenCard.classList.toggle("is-connected", isConnected);
     tokenEntry.hidden = isConnected;
     connectedRow.hidden = !isConnected;
+    if (deviceConnectBtn) deviceConnectBtn.hidden = isConnected;
 
-    // Intro banner: only relevant while disconnected. Once connected,
-    // there's nothing to onboard them into — hide it outright rather than
-    // leaving stale first-run copy sitting above a working connection.
     if (isConnected) {
       introBanner.hidden = true;
     } else {
       const everConnected = await getHasEverConnected(chromeStorageAdapter);
       introText.textContent = everConnected
-        ? "Your GitHub token was removed or stopped working. Add a new one below to reconnect."
-        : "Welcome to GITSTREAK — connect a GitHub token to see your contribution activity, streak, and tracked repos.";
+        ? "Your GitHub connection was removed or stopped working. Reconnect below."
+        : "Welcome to GITSTREAK — connect your GitHub account to see your contribution activity, streak, and tracked repos.";
       introBanner.hidden = false;
     }
 
@@ -70,6 +80,99 @@ export function initSettingsView() {
       ? `Connected as ${maskToken(token)} — last check failed, reconnect`
       : `Connected as ${maskToken(token)}`;
   }
+
+  // ------------------------------------------------------------------
+  // Device Flow
+  // ------------------------------------------------------------------
+
+  function renderDeviceStatus(msg) {
+    if (!deviceStatusEl) return;
+    deviceStatusEl.hidden = !msg;
+    deviceStatusEl.textContent = msg;
+  }
+
+  function resetDeviceUI() {
+    if (!deviceCodeEl) return;
+    deviceCodeEl.hidden = true;
+    deviceCancelBtn.hidden = true;
+    deviceConnectBtn.disabled = false;
+    deviceConnectBtn.textContent = "Connect GitHub";
+  }
+
+  function ackDeviceStatus() {
+    chrome.runtime.sendMessage({ type: "gitstreak:ack-device-flow-status" }).catch(() => {});
+  }
+
+  async function handleDeviceStatus(msg) {
+    if (!msg) return;
+
+    if (msg.status === "code_ready") {
+      deviceCodeEl.hidden = false;
+      deviceCodeValueEl.textContent = msg.userCode;
+      deviceLinkEl.href = msg.verificationUri;
+      deviceLinkEl.textContent = msg.verificationUri.replace(/^https?:\/\//, "");
+      deviceCancelBtn.hidden = false;
+      deviceConnectBtn.disabled = true;
+      deviceConnectBtn.textContent = "Waiting...";
+      renderDeviceStatus("Waiting for approval on GitHub — this can take a minute or so to register once you approve.");
+    } else if (msg.status === "pending") {
+      // no-op, keep showing the same waiting copy
+    } else if (msg.status === "slow_down") {
+      renderDeviceStatus("Still waiting — checking a little less often now.");
+    } else if (msg.status === "success") {
+      // background.js already saved the token directly to the vault —
+      // this view's job now is purely to reflect that, via the same
+      // source of truth (getToken()) everything else uses.
+      resetDeviceUI();
+      renderDeviceStatus("");
+      await refreshConnectedState();
+      window.dispatchEvent(new CustomEvent("gitstreak:auth-changed"));
+      window.dispatchEvent(new CustomEvent("gitstreak:token-saved")); // popup.js routes back to Pulse
+    } else if (msg.status === "cancelled") {
+      resetDeviceUI();
+      renderDeviceStatus("");
+      ackDeviceStatus();
+    } else if (msg.status === "error") {
+      resetDeviceUI();
+      renderDeviceStatus(msg.message);
+      ackDeviceStatus();
+    }
+  }
+
+  if (deviceConnectBtn) {
+    deviceConnectBtn.addEventListener("click", () => {
+      deviceConnectBtn.disabled = true;
+      deviceConnectBtn.textContent = "Connecting...";
+      renderDeviceStatus("Requesting a code from GitHub...");
+      chrome.runtime.sendMessage({ type: "gitstreak:start-device-flow" });
+    });
+
+    deviceCancelBtn.addEventListener("click", () => {
+      chrome.runtime.sendMessage({ type: "gitstreak:cancel-device-flow" });
+      resetDeviceUI();
+      renderDeviceStatus("");
+    });
+
+    // Live updates while this popup instance stays open.
+    chrome.runtime.onMessage.addListener((msg) => {
+      if (msg?.type !== "gitstreak:device-flow-status") return;
+      handleDeviceStatus(msg);
+    });
+
+    // Resync on open — catches a code still waiting for approval, or an
+    // error/cancellation that happened while this popup was closed.
+    // Success does NOT need to be caught here: refreshConnectedState()
+    // below (called unconditionally at the end of this function) already
+    // reflects a token background.js saved while this popup was closed.
+    chrome.runtime.sendMessage({ type: "gitstreak:query-device-flow-status" }, (status) => {
+      if (chrome.runtime.lastError) return; // background not ready yet, harmless
+      if (status) handleDeviceStatus(status);
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // Manual PAT entry (fallback path — unchanged logic, same functions)
+  // ------------------------------------------------------------------
 
   testBtn.addEventListener("click", async () => {
     const raw = tokenInput.value;
@@ -96,9 +199,6 @@ export function initSettingsView() {
     }
   });
 
-  // Editing the token after a successful test invalidates that test — force
-  // re-verification before allowing save, so what's saved is always what
-  // was actually checked.
   tokenInput.addEventListener("input", () => {
     lastValidated = null;
     saveBtn.disabled = true;
@@ -115,33 +215,30 @@ export function initSettingsView() {
     setStatus("Saving...");
     try {
       await saveToken(chromeStorageAdapter, raw);
-      await setAuthFailed(chromeStorageAdapter, false); // a fresh save always clears the failing-token flag
-      await setHasEverConnected(chromeStorageAdapter, true); // permanent — never cleared by revoke
+      await setAuthFailed(chromeStorageAdapter, false);
+      await setHasEverConnected(chromeStorageAdapter, true);
       tokenInput.value = "";
       lastValidated = null;
       scopesEl.hidden = true;
       setStatus("Token saved.");
       await refreshConnectedState();
       window.dispatchEvent(new CustomEvent("gitstreak:auth-changed"));
-      window.dispatchEvent(new CustomEvent("gitstreak:token-saved")); // popup.js routes back to Pulse
+      window.dispatchEvent(new CustomEvent("gitstreak:token-saved"));
     } catch (e) {
       setStatus(e.message, true);
     } finally {
-      saveBtn.disabled = true; // re-enabled only after a fresh test-connection
+      saveBtn.disabled = true;
     }
   });
 
   revokeBtn.addEventListener("click", async () => {
-    if (!confirm("Remove the saved GitHub token from this browser? Pulse and private-repo tracking will stop working until you add a new one. This does not revoke the token on GitHub's side — do that at github.com/settings/tokens if needed.")) {
+    if (!confirm("Remove the saved GitHub connection from this browser? Pulse and private-repo tracking will stop working until you reconnect. This does not revoke anything on GitHub's side — do that at github.com/settings/tokens or github.com/settings/applications if needed.")) {
       return;
     }
     try {
       await revokeToken(chromeStorageAdapter);
-      await setAuthFailed(chromeStorageAdapter, false); // no token means "no auth-failed state" either
-      // Deliberately NOT clearing hasEverConnected here — this is what
-      // makes the intro banner say "reconnect" instead of "welcome" on
-      // the next visit to Settings.
-      setStatus("Token removed locally.");
+      await setAuthFailed(chromeStorageAdapter, false);
+      setStatus("Disconnected locally.");
       await refreshConnectedState();
       window.dispatchEvent(new CustomEvent("gitstreak:auth-changed"));
     } catch (e) {
