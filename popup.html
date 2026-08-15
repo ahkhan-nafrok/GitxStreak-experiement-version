@@ -158,7 +158,7 @@
     </div>
   </section>
 
-  <!-- ===================== SETTINGS (gear-toggled full swap) ===================== -->
+<!-- ===================== SETTINGS (gear-toggled full swap) ===================== -->
   <section id="tab-settings" class="tab-panel">
     <div id="settings-token-card" class="glass-card">
       <!-- Intro banner: only shown while disconnected. Copy differs
@@ -168,7 +168,26 @@
         <p id="settings-intro-text" class="hint"></p>
       </div>
 
-      <div id="settings-token-entry">
+      <!-- Primary path: GitHub Device Flow. No token to copy/paste — a
+           short code + a github.com link, approved from any device. -->
+      <div class="field">
+        <button id="settings-device-connect-btn" class="btn-primary" type="button">Connect GitHub</button>
+        <div id="settings-device-code" class="device-code-box" hidden>
+          <p class="hint">
+            Enter this code at <a id="settings-device-link" href="#" target="_blank" rel="noopener"></a>:
+          </p>
+          <div class="device-code-value"></div>
+        </div>
+        <div id="settings-device-status" class="status" hidden></div>
+        <button id="settings-device-cancel-btn" class="btn-ghost" type="button" hidden>Cancel</button>
+      </div>
+
+      <!-- Fallback path: manual PAT paste, collapsed by default — for
+           anyone who can't complete Device Flow (restricted network, no
+           spare tab, etc). Same saveToken()/testConnection() calls as
+           before, untouched. -->
+      <details id="settings-token-entry" class="field field-collapsible">
+        <summary>Use a personal access token instead</summary>
         <div class="field">
           <label for="settings-token-input">GitHub token</label>
           <input id="settings-token-input" type="password" placeholder="ghp_... or github_pat_..." autocomplete="off" />
@@ -185,26 +204,27 @@
         </div>
 
         <div id="settings-scopes" class="hint mono" hidden></div>
-      </div>
+      </details>
 
       <div id="settings-status" class="status" hidden></div>
 
       <div id="settings-connected-row" class="settings-connected-row" hidden>
         <span id="settings-connected-label" class="fact-line"></span>
-        <button id="settings-revoke-btn" class="btn-ghost" type="button">Revoke Locally</button>
+        <button id="settings-revoke-btn" class="btn-ghost" type="button">Disconnect</button>
       </div>
     </div>
 
     <div class="glass-card settings-security-note">
       <h3>How this is protected</h3>
       <p class="hint">
-        The token is encrypted with a key that's generated to be non-extractable —
-        this extension's own code can use it to encrypt and decrypt, but can never
-        read its raw bytes back out. That key lives separately from the encrypted
-        token, so no passphrase or re-entry is needed, ever, even after a browser
-        or PC restart. The token itself never leaves this extension's own
-        popup/background context, and every request goes only to
-        <code>api.github.com</code>.
+        Your GitHub access token is encrypted with a key that's generated to be
+        non-extractable — this extension's own code can use it to encrypt and
+        decrypt, but can never read its raw bytes back out. That key lives
+        separately from the encrypted token, so no passphrase or re-entry is
+        needed, ever, even after a browser or PC restart. The token itself
+        never leaves this extension's own popup/background context, and every
+        request goes only to <code>api.github.com</code> and, for connecting,
+        <code>github.com</code>.
       </p>
     </div>
   </section>
