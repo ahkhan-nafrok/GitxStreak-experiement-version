@@ -1,5 +1,4 @@
 {
-
   "manifest_version": 3,
   "name": "GITSTREAK",
   "version": "1.0.0",
@@ -12,15 +11,21 @@
       "128": "icons/icon128.png"
     }
   },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
   "permissions": [
-    "storage"
+    "storage",
+    "alarms"
   ],
   "host_permissions": [
-    "https://api.github.com/*"
+    "https://api.github.com/*",
+    "https://github.com/*"
   ]
 }
