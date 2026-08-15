@@ -1014,3 +1014,20 @@ button { font-family: var(--font-sans); }
   transition: background var(--dur-hover) var(--ease), border-color var(--dur-hover) var(--ease);
 }
 .app-toast-action:hover { background: var(--glass-fill-hover); border-color: var(--glass-border-strong); }
+
+/* ---------------- Settings: Device Flow code display ---------------- */
+.device-code-box { margin-top: 10px; }
+.device-code-box .hint { margin-bottom: 6px; }
+.device-code-box .device-code-value {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  text-align: center;
+  color: var(--accent-strong);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+}
+#settings-device-cancel-btn { margin-top: 8px; width: 100%; }
