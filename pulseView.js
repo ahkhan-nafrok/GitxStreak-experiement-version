@@ -1,21 +1,27 @@
 // pulseView.js
 // Tab 1 — Pulse. Rolling last-12-months contribution calendar + current
-// streak + this-year total + last-pushed repo. Requires a connected GitHub
-// token (GraphQL has no unauthenticated tier), read through the vault —
-// never plaintext.
+// streak + this-year total + last-pushed repos. Requires a connected
+// GitHub token (GraphQL has no unauthenticated tier), read through the
+// vault — never plaintext.
 //
-// This pass: cached data now renders BEFORE any staleness/fetch logic runs
-// — previously a stale cache skipped straight into the fetch attempt with
-// nothing shown first, so a failed fetch (e.g. an expired token) left the
-// UI blank even with good cached data sitting in storage. Now the last
-// known calendar/streak/stats/last-pushed always render immediately, and a
-// subsequent auth failure (GitHubAuthError) leaves that render untouched —
-// it never wipes the cache, just flags it as stale-because-of-auth and
-// (only on an explicit Update click, not a silent background refresh)
-// shows a toast pointing at Settings. Also added the empty-state
-// "Connect GitHub" CTA, wired to the same open-settings event popup.js
-// listens for.
-import { ghGraphQL, getMostRecentlyPushedRepo, GitHubAuthError } from "./lib/github.js";
+// This pass: "Last Pushed" now shows the 3 most recently pushed repos
+// (account-wide, via getRecentlyPushedRepos) instead of just 1, rendered
+// as a compact list of name + relative-pushed-time rows — no description,
+// badge, or language shown anymore. Cache field renamed lastPushedRepo ->
+// lastPushedRepos (array).
+//
+// Carried over from the prior pass: cached data renders BEFORE any
+// staleness/fetch logic runs — a stale cache used to skip straight into
+// the fetch attempt with nothing shown first, so a failed fetch (e.g. an
+// expired token) left the UI blank even with good cached data sitting in
+// storage. The last known calendar/streak/stats/last-pushed always render
+// immediately, and a subsequent auth failure (GitHubAuthError) leaves that
+// render untouched — it never wipes the cache, just flags it as
+// stale-because-of-auth and (only on an explicit Update click, not a
+// silent background refresh) shows a toast pointing at Settings. Also the
+// empty-state "Connect GitHub" CTA, wired to the same open-settings event
+// popup.js listens for.
+import { ghGraphQL, getRecentlyPushedRepos, GitHubAuthError } from "./lib/github.js";
 import { chromeStorageAdapter } from "./lib/storageAdapter.js";
 import { getToken } from "./lib/tokenVault.js";
 import { setAuthFailed } from "./lib/authState.js";
@@ -31,6 +37,7 @@ import {
 } from "./lib/pulse.js";
 
 const CACHE_KEY = "ghContributionCache";
+const LAST_PUSHED_COUNT = 3;
 const SUCCESS_STATE_MS = 1600;
 const MONTH_NAMES = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
 
@@ -50,11 +57,7 @@ export function initPulseView() {
   const lastUpdatedEl = document.getElementById("pulse-last-updated");
   const lastUpdatedTextEl = document.getElementById("pulse-last-updated-text");
   const lastPushedEl = document.getElementById("pulse-last-pushed");
-  const plpRepoNameEl = document.getElementById("plp-repo-name");
-  const plpRepoBadgeEl = document.getElementById("plp-repo-badge");
-  const plpRepoDescEl = document.getElementById("plp-repo-desc");
-  const plpPushedAtEl = document.getElementById("plp-pushed-at");
-  const plpLanguageEl = document.getElementById("plp-language");
+  const plpListEl = document.getElementById("plp-list");
 
   let successTimer = null;
 
@@ -156,17 +159,29 @@ export function initPulseView() {
     yearTotalEl.textContent = String(calculateYearTotal(dayMap));
   }
 
-  function renderLastPushed(repo) {
-    if (!repo) {
+  /** Renders up to LAST_PUSHED_COUNT repos as compact single-line rows —
+   * icon + repo name (truncated with ellipsis if long) + right-aligned
+   * relative pushed time. No description/badge/language — those were
+   * dropped from both the fetched shape (lib/github.js) and this render
+   * on purpose, per the "name + time only" design. */
+  function renderLastPushed(repos) {
+    if (!Array.isArray(repos) || repos.length === 0) {
       lastPushedEl.hidden = true;
       return;
     }
     lastPushedEl.hidden = false;
-    plpRepoNameEl.textContent = repo.fullName;
-    plpRepoBadgeEl.hidden = !repo.isPrivate;
-    plpRepoDescEl.textContent = repo.description || "No description";
-    plpPushedAtEl.textContent = repo.pushedAt ? `Pushed ${formatRelativeTime(repo.pushedAt)}` : "";
-    plpLanguageEl.textContent = repo.language || "";
+    plpListEl.innerHTML = repos
+      .map(
+        (repo) => `
+        <div class="plp-row">
+          <div class="plp-row-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          </div>
+          <span class="plp-row-name mono" title="${escapeHtml(repo.fullName)}">${escapeHtml(repo.fullName)}</span>
+          <span class="plp-row-time">${repo.pushedAt ? escapeHtml(formatRelativeTime(repo.pushedAt)) : ""}</span>
+        </div>`
+      )
+      .join("");
   }
 
   /** Freshness caption now renders into the nested text span inside the
@@ -188,7 +203,7 @@ export function initPulseView() {
     renderGrid(Array.isArray(cache.grid) ? cache.grid : []);
     renderStreak(cache.dayMap || {});
     renderYearTotal(cache.dayMap || {});
-    renderLastPushed(cache.lastPushedRepo || null);
+    renderLastPushed(cache.lastPushedRepos || []);
     renderLastUpdated(cache.fetchedAt || null);
   }
 
@@ -217,7 +232,9 @@ export function initPulseView() {
       renderAll(cache);
     }
 
-    const stale = isContributionCacheStale(cache) || (cache && !cache.lastPushedRepo);
+    const stale =
+      isContributionCacheStale(cache) ||
+      (cache && !Array.isArray(cache.lastPushedRepos));
     if (!forceRefresh && !stale) {
       setStatus("");
       return;
@@ -227,9 +244,9 @@ export function initPulseView() {
     setStatus(cache ? "" : "Fetching your latest activity...");
     try {
       const range = getRolling12MonthRange();
-      const [contribData, lastPushedRepo] = await Promise.all([
+      const [contribData, lastPushedRepos] = await Promise.all([
         ghGraphQL(CONTRIBUTION_QUERY, { from: range.from, to: range.to }, token),
-        getMostRecentlyPushedRepo(token).catch(() => null),
+        getRecentlyPushedRepos(token, LAST_PUSHED_COUNT).catch(() => []),
       ]);
       const dayMap = parseContributionCalendar(contribData);
       const grid = buildContributionGrid(contribData);
@@ -237,7 +254,7 @@ export function initPulseView() {
         asOfDateKey: range.asOfDateKey,
         dayMap,
         grid,
-        lastPushedRepo,
+        lastPushedRepos,
         fetchedAt: new Date().toISOString(),
       };
       await chromeStorageAdapter.set({ [CACHE_KEY]: newCache });
