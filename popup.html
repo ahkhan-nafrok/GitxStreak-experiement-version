@@ -89,27 +89,17 @@
         </div>
       </div>
 
+      <!-- Last Pushed: now a compact list of up to 3 repos (see
+           pulseView.js renderLastPushed / lib/github.js
+           getRecentlyPushedRepos) — each row is just an icon, the repo
+           name, and a relative "pushed Xd/Xh ago" time. No description,
+           private/public badge, or language shown anymore; that data
+           isn't even fetched for this section now. -->
       <div id="pulse-last-pushed" class="pulse-last-pushed" hidden>
         <div class="plp-head">
           <span class="plp-label">Last Pushed</span>
         </div>
-        <div class="plp-body">
-          <div class="plp-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-          </div>
-          <div class="plp-content">
-            <div class="plp-repo-row">
-              <span id="plp-repo-name" class="plp-repo-name mono"></span>
-              <span id="plp-repo-badge" class="plp-badge" hidden>Private</span>
-            </div>
-            <p id="plp-repo-desc" class="hint plp-desc"></p>
-            <div class="plp-meta-row">
-              <span id="plp-pushed-at" class="fact-line"></span>
-              <span id="plp-language" class="fact-line"></span>
-            </div>
-          </div>
-          <svg class="plp-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3l5 5-5 5"/></svg>
-        </div>
+        <div id="plp-list" class="plp-list"></div>
       </div>
     </div>
   </section>
