@@ -6,21 +6,33 @@
 // unchanged from the old Project Knowledge Manager — just rewired onto this
 // tracked-repo model instead of GitHub's own "pinned profile" concept.
 //
-// The old account-level "GitHub Overview" block (contribution calendar +
-// recently-pushed-via-/user/repos) that used to live at the bottom of this
-// tab is gone — the calendar moved to Pulse (Tab 1), and "recently pushed"
-// here is now just this same tracked list's unpinned tail, sorted by commit
-// recency (sortProjectsForList already does this).
+// This pass: added the "Add from GitHub" picker (#github-picker), a second
+// entry point onto the exact same createTrackedProject()/checkForUpdates()
+// path the URL-form (#new-project-btn) already used, so there's one write
+// path with two UIs rather than two divergent ones.
 //
-// This tab is deliberately NOT gated on having a token — public repos work
-// fully unauthenticated, and browsing/pinning/adding never touch GitHub at
-// all. The only place a token matters is the actual "Check for Updates"
-// network call, which now distinguishes an auth failure (GitHubAuthError,
-// e.g. an expired/revoked token) from any other error and surfaces it as a
-// dismissible toast pointing at Settings, instead of a plain inline error
-// line — nothing here blocks or locks based on token state.
-import { getLatestCommit, getRepoMeta, parseRepoInput, GitHubAuthError } from "./lib/github.js";
-import { createProjectStore } from "./lib/projectStore.js";
+// The button is always visible — clicking it never silently no-ops.
+// Gating happens in stages, cheapest first, all before any picker UI shows:
+//   1. MAX_TRACKED cap (no network call needed) — toast, picker never opens.
+//   2. No token saved (no network call needed) — toast pointing at
+//      Settings, picker never opens.
+//   3. Token present but rejected by GitHub (401, revoked/expired) — only
+//      discoverable once the picker's first fetch actually runs. On that,
+//      the picker closes and this fires the SAME setAuthFailed +
+//      gitstreak:auth-changed + toast sequence pdRefreshBtn's
+//      GitHubAuthError handler already uses below (same toast `key`, so
+//      the two paths can't double up a duplicate notice).
+// This keeps exactly one "your GitHub auth needs attention" UX in the app,
+// regardless of which button triggered it.
+//
+// This tab is otherwise deliberately NOT gated on having a token for its
+// existing manual-add/browse/pin flows — public repos work fully
+// unauthenticated. The only things that ever require a token are: private
+// repos, "Check for Updates" against a private repo, and the new picker
+// (which only ever lists the authenticated account's own repos, so it
+// always needs one).
+import { getLatestCommit, getRepoMeta, parseRepoInput, listUserRepos, GitHubAuthError } from "./lib/github.js";
+import { createProjectStore, MAX_TRACKED } from "./lib/projectStore.js";
 import { chromeStorageAdapter } from "./lib/storageAdapter.js";
 import { getToken } from "./lib/tokenVault.js";
 import { setAuthFailed } from "./lib/authState.js";
@@ -34,6 +46,10 @@ const ICON_PIN =
   '<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2a1 1 0 0 0-1 1v11l4.5-2.7L12.5 14V3a1 1 0 0 0-1-1h-7Z" fill="currentColor"/></svg>';
 const ICON_X =
   '<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+const ICON_CHECK =
+  '<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const ICON_PLUS =
+  '<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
 
 /**
  * Order projects for the list view:
@@ -61,6 +77,18 @@ function compareByCommitRecency(a, b) {
   return new Date(b.lastCommitAt).getTime() - new Date(a.lastCommitAt).getTime();
 }
 
+/** Normalizes a stored `repo` field (URL, shorthand, whatever) down to a
+ * lowercase "owner/repo" key, for cross-referencing against GitHub API
+ * results. Malformed entries are just skipped — never block the picker. */
+function normalizeRepoKey(repoField) {
+  try {
+    const { owner, repo } = parseRepoInput(repoField);
+    return `${owner}/${repo}`.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
 export function initProjectsView() {
   const listEl = document.getElementById("project-list");
   const projectsCountEl = document.getElementById("projects-count");
@@ -80,6 +108,22 @@ export function initProjectsView() {
   const pdRefreshBtn = document.getElementById("pd-refresh-btn");
   const pdStatus = document.getElementById("pd-status");
   const pdHistory = document.getElementById("pd-history");
+
+  // "Add from GitHub" picker elements
+  const githubImportBtn = document.getElementById("github-import-btn");
+  const pickerEl = document.getElementById("github-picker");
+  const gpCloseBtn = document.getElementById("gp-close-btn");
+  const gpSearch = document.getElementById("gp-search");
+  const gpStatus = document.getElementById("gp-status");
+  const gpList = document.getElementById("gp-list");
+  const gpLoadMoreBtn = document.getElementById("gp-load-more-btn");
+  const gpCapNote = document.getElementById("gp-cap-note");
+
+  let pickerRepos = [];
+  let pickerPage = 0;
+  let pickerHasNextPage = false;
+  let pickerLoading = false;
+  let trackedKeySet = new Set();
 
   function setStatus(el, msg, isError = false) {
     el.hidden = !msg;
@@ -189,21 +233,12 @@ export function initProjectsView() {
   }
 
   /**
-   * Shared check logic used by both the new-project flow and the manual
-   * refresh button.
+   * Shared check logic used by the new-project flow (both the URL form and
+   * the GitHub picker) and the manual refresh button.
    *
    * `lastCheckedAt` is stamped FIRST, before the network call — per spec,
    * it must be stamped "every time you check a repo, regardless of
-   * outcome." Stamping it only after a successful fetch would mean a repo
-   * that keeps failing (rate limit, network blip, revoked token) silently
-   * stops showing as recently checked, which defeats the point of that
-   * field: you'd have no way to tell "checked recently, no changes" apart
-   * from "hasn't been reachable in days."
-   *
-   * If the commit fetch throws, it propagates to the caller (both callers
-   * already catch and surface it) — but the stamp above has already been
-   * saved, so the failure is visible without corrupting change-tracking
-   * facts. Token is read from the vault so private repos work when a
+   * outcome." Token is read from the vault so private repos work when a
    * token with private scope is connected; a public repo still works fine
    * with token=null.
    */
@@ -228,6 +263,19 @@ export function initProjectsView() {
     }
   }
 
+  /**
+   * The one write path onto projectStore.create — used by both the
+   * URL-form add and the GitHub picker's add, so there's a single place
+   * that turns "a name + a repo" into a tracked project. Propagates
+   * store.create's errors (duplicate id, MAX_TRACKED cap) untouched —
+   * callers decide how to surface them (alert vs. inline picker message).
+   */
+  async function createTrackedProject(name, repoFullName) {
+    const id = slugify(name);
+    await store.create(id, name, repoFullName);
+    return id;
+  }
+
   newBtn.addEventListener("click", async () => {
     const name = nameInput.value.trim();
     const repo = repoInput.value.trim();
@@ -235,20 +283,14 @@ export function initProjectsView() {
       alert("Give the project a name and a repo (owner/repo).");
       return;
     }
-    const id = slugify(name);
     try {
-      await store.create(id, name, repo);
+      const id = await createTrackedProject(name, repo);
       nameInput.value = "";
       repoInput.value = "";
       newForm.open = false;
       await renderList();
       await openProject(id);
 
-      // Immediately fetch commit #1 + repo meta so the card isn't empty on
-      // first open. Non-blocking: if this fails (bad repo name, rate
-      // limit, private repo with no token), the project still exists —
-      // just surface the error inline, no rollback. lastCheckedAt will
-      // still have been stamped inside checkForUpdates even on failure.
       try {
         await checkForUpdates(id);
         await renderList();
@@ -292,20 +334,210 @@ export function initProjectsView() {
       await renderList();
       await openProject(activeProjectId);
       if (e instanceof GitHubAuthError) {
-        await setAuthFailed(chromeStorageAdapter, true);
-        window.dispatchEvent(new CustomEvent("gitstreak:auth-changed"));
-        setStatus(pdStatus, "");
-        showToast("GitHub rejected your token — reconnect it in Settings for private-repo checks.", {
-          actionLabel: "Open Settings",
-          onAction: () => window.dispatchEvent(new CustomEvent("gitstreak:open-settings")),
-          key: "projects-auth-failed",
-        });
+        await handleAuthFailure();
       } else {
         setStatus(pdStatus, e.message, true);
       }
     } finally {
       pdRefreshBtn.disabled = false;
     }
+  });
+
+  // ------------------------------------------------------------------
+  // "Add from GitHub" picker
+  // ------------------------------------------------------------------
+
+  /** The single place that reacts to a GitHubAuthError, so every entry
+   * point (refresh button, picker fetch) produces the identical toast +
+   * state change — same `key`, so repeated triggers can't stack notices. */
+  async function handleAuthFailure() {
+    await setAuthFailed(chromeStorageAdapter, true);
+    window.dispatchEvent(new CustomEvent("gitstreak:auth-changed"));
+    showToast("GitHub rejected your token — reconnect it in Settings.", {
+      actionLabel: "Open Settings",
+      onAction: () => window.dispatchEvent(new CustomEvent("gitstreak:open-settings")),
+      key: "gitstreak-auth-failed",
+    });
+  }
+
+  function closePicker() {
+    pickerEl.hidden = true;
+    gpSearch.value = "";
+    pickerRepos = [];
+    pickerPage = 0;
+    pickerHasNextPage = false;
+    gpList.innerHTML = "";
+    gpLoadMoreBtn.hidden = true;
+    setStatus(gpStatus, "");
+    if (gpCapNote) gpCapNote.hidden = true;
+  }
+
+  async function buildTrackedKeySet() {
+    const projects = await store.list();
+    const set = new Set();
+    for (const p of projects) {
+      const key = normalizeRepoKey(p.repo);
+      if (key) set.add(key);
+    }
+    return set;
+  }
+
+  function renderPickerList() {
+    const query = gpSearch.value.trim().toLowerCase();
+    const filtered = query
+      ? pickerRepos.filter((r) => r.fullName.toLowerCase().includes(query))
+      : pickerRepos;
+
+    if (!filtered.length) {
+      gpList.innerHTML = `<p class="hint gp-empty">${
+        query ? "No repos match that filter." : "No repos found on this account."
+      }</p>`;
+      return;
+    }
+
+    gpList.innerHTML = "";
+    for (const repo of filtered) {
+      const key = repo.fullName.toLowerCase();
+      const isTracked = trackedKeySet.has(key);
+      const row = document.createElement("div");
+      row.className = "gp-row" + (isTracked ? " is-tracked" : "");
+      const metaParts = [repo.isPrivate ? "Private" : "Public"];
+      if (repo.language) metaParts.push(repo.language);
+      if (typeof repo.stars === "number") metaParts.push(`★ ${repo.stars}`);
+      row.innerHTML = `
+        <div class="gp-row-body">
+          <div class="gp-row-name">${escapeHtml(repo.fullName)}</div>
+          <div class="gp-row-meta">${escapeHtml(metaParts.join(" · "))}</div>
+        </div>
+        <span class="gp-row-action">${isTracked ? `${ICON_CHECK}<span>Tracked</span>` : `${ICON_PLUS}<span>Add</span>`}</span>
+      `;
+      if (!isTracked) {
+        row.addEventListener("click", () => handlePickerAdd(repo, row));
+      }
+      gpList.appendChild(row);
+    }
+  }
+
+  async function handlePickerAdd(repo, rowEl) {
+    if (trackedKeySet.has(repo.fullName.toLowerCase()) || rowEl.classList.contains("is-loading")) return;
+
+    const projects = await store.list();
+    if (projects.length >= MAX_TRACKED) {
+      showToast(`You're tracking the max of ${MAX_TRACKED} repos — remove one first.`, {
+        key: "gitstreak-cap-reached",
+      });
+      if (gpCapNote) gpCapNote.hidden = false;
+      return;
+    }
+
+    rowEl.classList.add("is-loading");
+    try {
+      const id = await createTrackedProject(repo.name, repo.fullName);
+      // We already have description/language/stars/pushedAt from the
+      // picker's own listUserRepos call — save it immediately so the card
+      // isn't empty even before checkForUpdates' own getRepoMeta returns.
+      await store.updateRepoMeta(id, {
+        description: repo.description,
+        language: repo.language,
+        stargazers_count: repo.stars,
+        private: repo.isPrivate,
+        pushed_at: repo.pushedAt,
+      });
+      trackedKeySet.add(repo.fullName.toLowerCase());
+      renderPickerList();
+      await renderList();
+
+      try {
+        await checkForUpdates(id);
+        await renderList();
+      } catch (e) {
+        console.warn(`First check after picker-add failed for ${repo.fullName}: ${e.message}`);
+      }
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      rowEl.classList.remove("is-loading");
+    }
+  }
+
+  async function loadPickerPage(page) {
+    if (pickerLoading) return;
+    pickerLoading = true;
+    gpLoadMoreBtn.disabled = true;
+    setStatus(gpStatus, page === 1 ? "Loading your repos..." : "Loading more...");
+
+    try {
+      const token = await getToken(chromeStorageAdapter);
+      if (!token) {
+        // Shouldn't normally happen (checked before opening), but a token
+        // could be revoked in another tab while the picker sits open.
+        closePicker();
+        showToast("Connect your GitHub account in Settings to add repos this way.", {
+          actionLabel: "Open Settings",
+          onAction: () => window.dispatchEvent(new CustomEvent("gitstreak:open-settings")),
+          key: "gitstreak-no-token",
+        });
+        return;
+      }
+
+      const { repos, hasNextPage } = await listUserRepos(token, { page, perPage: 30 });
+      pickerRepos = page === 1 ? repos : [...pickerRepos, ...repos];
+      pickerPage = page;
+      pickerHasNextPage = hasNextPage;
+      setStatus(gpStatus, "");
+      renderPickerList();
+      gpLoadMoreBtn.hidden = !hasNextPage;
+    } catch (e) {
+      if (e instanceof GitHubAuthError) {
+        closePicker();
+        await handleAuthFailure();
+      } else {
+        setStatus(gpStatus, e.message, true);
+      }
+    } finally {
+      pickerLoading = false;
+      gpLoadMoreBtn.disabled = false;
+    }
+  }
+
+  async function openPicker() {
+    const projects = await store.list();
+    if (projects.length >= MAX_TRACKED) {
+      showToast(`You're tracking the max of ${MAX_TRACKED} repos — remove one first.`, {
+        key: "gitstreak-cap-reached",
+      });
+      return;
+    }
+
+    const token = await getToken(chromeStorageAdapter);
+    if (!token) {
+      showToast("Connect your GitHub account in Settings to add repos this way.", {
+        actionLabel: "Open Settings",
+        onAction: () => window.dispatchEvent(new CustomEvent("gitstreak:open-settings")),
+        key: "gitstreak-no-token",
+      });
+      return;
+    }
+
+    trackedKeySet = await buildTrackedKeySet();
+    pickerEl.hidden = false;
+    await loadPickerPage(1);
+  }
+
+  githubImportBtn.addEventListener("click", () => {
+    openPicker();
+  });
+
+  gpCloseBtn.addEventListener("click", () => {
+    closePicker();
+  });
+
+  gpSearch.addEventListener("input", () => {
+    renderPickerList();
+  });
+
+  gpLoadMoreBtn.addEventListener("click", () => {
+    if (pickerHasNextPage) loadPickerPage(pickerPage + 1);
   });
 
   renderList();
