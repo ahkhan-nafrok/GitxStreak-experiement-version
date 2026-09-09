@@ -104,7 +104,7 @@
     </div>
   </section>
 
-  <!-- ===================== TAB 2: PROJECTS ===================== -->
+    <!-- ===================== TAB 2: PROJECTS ===================== -->
   <section id="tab-projects" class="tab-panel">
     <div class="projects-list-header">
       <h3>Tracked Repos</h3>
@@ -112,8 +112,15 @@
     </div>
     <div id="project-list"></div>
 
+    <div class="projects-add-actions">
+      <button id="github-import-btn" class="btn-primary" type="button">
+        <span class="github-import-icon" aria-hidden="true"></span>
+        Add from GitHub
+      </button>
+    </div>
+
     <details class="field field-collapsible add-project-trigger" id="new-project-form">
-      <summary>Track a repo</summary>
+      <summary>Track a repo by URL <span class="summary-hint">any public repo</span></summary>
       <div class="new-project-fields">
         <input id="new-project-name" type="text" placeholder="Display name (e.g. AML Motors)" autocomplete="off" />
         <input id="new-project-repo" type="text" placeholder="owner/repo" autocomplete="off" />
@@ -145,6 +152,25 @@
       <div id="pd-status" class="status" hidden></div>
 
       <div id="pd-history" class="history-box"></div>
+    </div>
+
+    <!-- "Add from GitHub" picker. Always in the DOM, hidden until
+         opened; only ever opened once projectsView.js has already
+         confirmed a token exists and the MAX_TRACKED cap isn't hit — see
+         openPicker() there. -->
+    <div id="github-picker" class="project-detail glass-card" hidden>
+      <button id="gp-close-btn" class="pd-close-btn" type="button" aria-label="Back to Projects" title="Back to Projects">
+        <span class="pd-close-icon" aria-hidden="true"></span>
+        <span>Back to Projects</span>
+      </button>
+
+      <h2 class="gp-title">Add from GitHub</h2>
+      <p id="gp-cap-note" class="hint gp-cap-note" hidden>You're tracking the max — remove one first to add more.</p>
+
+      <input id="gp-search" type="text" placeholder="Filter your repos..." autocomplete="off" />
+      <div id="gp-status" class="status" hidden></div>
+      <div id="gp-list" class="gp-list"></div>
+      <button id="gp-load-more-btn" class="btn-ghost" type="button" hidden>Load more</button>
     </div>
   </section>
 
