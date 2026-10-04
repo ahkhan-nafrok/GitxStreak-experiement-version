@@ -26,6 +26,6 @@
   ],
   "host_permissions": [
     "https://api.github.com/*",
-    "https://github.com/*"
+    "https://github.com/login/*"
   ]
 }
