@@ -12,7 +12,7 @@ const runner = createDeviceFlowRunner({
   alarms: chrome.alarms,
   requestDeviceCode,
   checkTokenOnce,
-  onSuccess: (token) => saveConnection(chromeStorageAdapter, token),
+  onSuccess: (token, { scopes }) => saveConnection(chromeStorageAdapter, token, { scopes }),
   broadcast: (message) => {
     chrome.runtime.sendMessage(message).catch(() => {}); // no popup open is normal
   },
@@ -25,7 +25,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   switch (msg?.type) {
     case "gitstreak:start-device-flow":
-      runner.startFlow().catch(logFailure);
+      runner.startFlow({ includePrivate: msg.includePrivate === true }).catch(logFailure);
       return false;
     case "gitstreak:cancel-device-flow":
       runner.cancelFlow().catch(logFailure);
