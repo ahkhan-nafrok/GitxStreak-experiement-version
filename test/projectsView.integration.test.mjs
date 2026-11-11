@@ -96,14 +96,14 @@ function makeFakeElement(id) {
   return el;
 }
 
-const elementIds = [
-  "project-list", "projects-count", "new-project-btn", "new-project-name", "new-project-repo", "new-project-form",
-  "project-detail", "pd-close-btn", "pd-name", "pd-repo", "pd-meta", "pd-last-checked", "pd-last-commit", "pd-pin-btn",
-  "pd-refresh-btn", "pd-status", "pd-history",
-];
+import { HTML_IDS, HIDDEN_IDS } from "./helpers/fakeDom.mjs";
+const elementIds = HTML_IDS; // parsed from the real popup.html: a view asking for an id the HTML lacks still throws below
 
 const elements = {};
-for (const id of elementIds) elements[id] = makeFakeElement(id);
+for (const id of elementIds) {
+  elements[id] = makeFakeElement(id);
+  elements[id].hidden = HIDDEN_IDS.has(id);
+}
 
 // Rows appended to #project-list are real DOM-like elements built by
 // document.createElement("div") inside renderList() — track them so we can
@@ -122,6 +122,7 @@ globalThis.document = {
   },
 };
 
+globalThis.window = new EventTarget(); // projectsView registers window listeners
 globalThis.alert = (msg) => { throw new Error(`alert() was called (should not happen in this test): ${msg}`); };
 globalThis.confirm = () => true;
 
@@ -196,15 +197,15 @@ assert.equal(repoMetaCallCount, 1, "creating a project must also trigger exactly
 assert.ok(!elements["pd-last-checked"].textContent.includes("never"), "last-checked must no longer read 'never' after the auto-check");
 assert.ok(!elements["pd-last-commit"].textContent.includes("unknown"), "last-commit must no longer read 'unknown' after the auto-check");
 assert.ok(
-  chromeStorageMock.projects["fake-project"].commitHistory.length === 1,
+  chromeStorageMock.projects["fake/repo"].commitHistory.length === 1,
   "history entry #1 must be recorded in storage immediately on add, not waiting for a manual check"
 );
 assert.ok(
-  chromeStorageMock.projects["fake-project"].repoMeta,
+  chromeStorageMock.projects["fake/repo"].repoMeta,
   "repoMeta must be recorded in storage immediately on add"
 );
-assert.equal(chromeStorageMock.projects["fake-project"].repoMeta.language, "JavaScript");
-assert.equal(chromeStorageMock.projects["fake-project"].repoMeta.stars, 7);
+assert.equal(chromeStorageMock.projects["fake/repo"].repoMeta.language, "JavaScript");
+assert.equal(chromeStorageMock.projects["fake/repo"].repoMeta.stars, 7);
 console.log(`  ok  - pd-last-checked: "${elements["pd-last-checked"].textContent}"`);
 console.log(`  ok  - pd-last-commit: "${elements["pd-last-commit"].textContent}"`);
 console.log("  ok  - repoMeta snapshot stored alongside the commit check");
@@ -242,7 +243,7 @@ commitCallCount = 0;
 await elements["pd-refresh-btn"].dispatch("click");
 assert.equal(commitCallCount, 1, "a manual check must still make exactly one GitHub commits call");
 assert.equal(
-  chromeStorageMock.projects["fake-project"].commitHistory.length,
+  chromeStorageMock.projects["fake/repo"].commitHistory.length,
   1,
   "an unchanged commit must not add a duplicate history entry"
 );
@@ -253,18 +254,18 @@ mockSha = "sha-changed";
 mockDate = "2026-07-20T00:00:00Z";
 await elements["pd-refresh-btn"].dispatch("click");
 assert.equal(
-  chromeStorageMock.projects["fake-project"].commitHistory.length,
+  chromeStorageMock.projects["fake/repo"].commitHistory.length,
   2,
   "a real new commit must append a second history entry"
 );
-assert.equal(chromeStorageMock.projects["fake-project"].commitHistory[0].sha, "sha-changed", "newest commit must be first");
+assert.equal(chromeStorageMock.projects["fake/repo"].commitHistory[0].sha, "sha-changed", "newest commit must be first");
 assert.ok(elements["pd-history"].innerHTML.includes("sha-cha"), "the rendered history should reflect the new commit");
 console.log("  ok  - new commit correctly appended, newest-first");
 
 console.log("\n--- Pinning ---");
 console.log("Pinning the active project via the detail-view pin button...");
 await elements["pd-pin-btn"].dispatch("click");
-assert.equal(chromeStorageMock.projects["fake-project"].pinned, true, "pin button click must persist pinned=true");
+assert.equal(chromeStorageMock.projects["fake/repo"].pinned, true, "pin button click must persist pinned=true");
 console.log("  ok  - project pinned, persisted to storage");
 
 console.log("\n=== REGRESSION: lastCheckedAt must stamp even when the check fails ===");
@@ -276,17 +277,17 @@ await elements["new-project-btn"].dispatch("click");
 commitsShouldFail = false;
 
 assert.equal(
-  chromeStorageMock.projects["zzz-second-project"] !== undefined,
+  chromeStorageMock.projects["fake/repo2"] !== undefined,
   true,
   "the project must still be created even though its first auto-check failed"
 );
 assert.equal(
-  chromeStorageMock.projects["zzz-second-project"].commitHistory.length,
+  chromeStorageMock.projects["fake/repo2"].commitHistory.length,
   0,
   "a failed auto-check must leave commitHistory empty, not crash the add flow"
 );
 assert.ok(
-  chromeStorageMock.projects["zzz-second-project"].lastCheckedAt,
+  chromeStorageMock.projects["fake/repo2"].lastCheckedAt,
   "REGRESSION CHECK: lastCheckedAt must be stamped even though the check failed — the UI must never silently keep showing stale/blank staleness info for a repo that's actually been failing"
 );
 assert.ok(
@@ -336,7 +337,7 @@ await deleteStub.dispatch("click", { stopPropagation: () => {} });
 // — flush that microtask before checking anything renderList() sets.
 await new Promise((r) => setTimeout(r, 0));
 assert.equal(
-  chromeStorageMock.projects["zzz-second-project"],
+  chromeStorageMock.projects["fake/repo2"],
   undefined,
   "the project must be removed from storage"
 );
@@ -352,3 +353,4 @@ assert.equal(elements["projects-count"].textContent, "1", "projects-count must r
 console.log("  ok  - projects-count badge reads 1 after deleting the open project");
 
 console.log("\nAll projectsView integration checks passed.");
+
