@@ -91,7 +91,12 @@ function initTabs() {
   // instead of reaching into popup.js's internals directly.
   window.addEventListener("gitstreak:open-settings", () => {
     openSettings();
-    tokenInput?.focus();
+    // Device Flow is the primary connect path; the token input lives inside a
+    // collapsed <details>, where focus() would silently do nothing. Fall back
+    // to it only if the primary button isn't usable (e.g. mid-flow).
+    const connectBtn = document.getElementById("settings-device-connect-btn");
+    const target = connectBtn && !connectBtn.hidden && !connectBtn.disabled ? connectBtn : tokenInput;
+    target?.focus();
   });
 
   // A successful save always lands back on Pulse — the default/home tab —
