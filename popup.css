@@ -998,6 +998,15 @@ button { font-family: var(--font-sans); }
 /* ---------------- Settings: Device Flow code display ---------------- */
 .device-code-box { margin-top: 10px; }
 .device-code-box .hint { margin-bottom: 6px; }
+/* Monochrome link: the browser-default blue would be a color outside the ember accent. */
+.device-code-box a {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--text-tertiary, currentColor);
+  transition: text-decoration-color var(--dur-hover) var(--ease);
+}
+.device-code-box a:hover { text-decoration-color: currentColor; }
 .device-code-box .device-code-value {
   font-family: var(--font-mono);
   font-size: 20px;
@@ -1093,3 +1102,28 @@ button { font-family: var(--font-sans); }
 .gp-row:not(.is-tracked):hover .gp-row-action { color: var(--text-primary); }
 
 #gp-load-more-btn { width: 100%; }
+
+/* ---------------- Settings: private-repos opt-in + access note ----------------
+   Monochrome only (no new colors): state is carried by opacity/cursor. */
+.settings-private-row { margin-bottom: 10px; }
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color var(--dur-hover) var(--ease);
+}
+.check-row:hover { color: var(--text-primary); }
+.check-row input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 1px 0 0;
+  flex-shrink: 0;
+  accent-color: var(--accent-strong);
+  cursor: pointer;
+}
+.check-row input[type="checkbox"]:disabled { cursor: not-allowed; opacity: 0.45; }
+.settings-access-note { margin-top: 10px; }
