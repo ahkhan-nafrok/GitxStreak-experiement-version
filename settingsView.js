@@ -4,45 +4,78 @@
 // "Use a personal access token instead").
 //
 // Device Flow's actual polling is alarm-driven and storage-backed inside
-// background.js (see that file's header comment for why) — it saves the
-// token directly to the vault the moment GitHub approves, independent of
-// whether this popup is even open. This view's job is now just:
-//   (1) tell background.js to start a flow,
-//   (2) render whatever LIVE status background.js broadcasts, if this
-//       popup happens to be open at the time,
-//   (3) on init, ask background.js for any in-progress/unacked terminal
+// background.js (Chrome kills an idle MV3 worker, so a long in-memory loop
+// can't work) — it saves the connection directly the moment GitHub approves,
+// independent of whether this popup is even open. This view's job is:
+//   (1) tell background.js to start a flow (and which scope tier to ask for),
+//   (2) render whatever LIVE status background.js broadcasts,
+//   (3) while a code is showing, nudge the worker to poll every
+//       interval+1s so approval is noticed in seconds when the popup stays
+//       open (the worker's own rate guard makes extra nudges harmless),
+//   (4) on init, ask background.js for any in-progress/unacked terminal
 //       status so a popup that missed live updates can resync, and
-//   (4) always call refreshConnectedState() — which reads the vault
-//       directly via getToken() — as the actual source of truth for
-//       "are we connected." This is what makes success work correctly
-//       even if this popup was fully closed for the entire approval wait.
+//   (5) treat the vault (getToken) as the source of truth for "connected".
+//
+// Connect/disconnect side effects go ONLY through lib/connection.js
+// (invariant 9) — this file never writes the token, connection id, scopes or
+// auth flags itself.
 import { chromeStorageAdapter } from "./lib/storageAdapter.js";
-import { saveToken, getToken, revokeToken, maskToken, testConnection } from "./lib/tokenVault.js";
-import { getAuthFailed, setAuthFailed, getHasEverConnected, setHasEverConnected } from "./lib/authState.js";
+import { getToken, maskToken, testConnection } from "./lib/tokenVault.js";
+import { getAuthFailed, getHasEverConnected, getGrantedScopes } from "./lib/authState.js";
+import { saveConnection, disconnect } from "./lib/connection.js";
+import { describeAccess } from "./lib/scopes.js";
+
+const GITHUB_LINK_PREFIX = "https://github.com/";
+const PUBLIC_ONLY_WARNING =
+  "Without private-repo access, GITSTREAK can't see pushes to your private repos, so “Last Pushed” will only " +
+  "show public repos, and private repos can't be listed or tracked.\n\nContinue with public access only?";
+const DEFAULT_POLL_SECONDS = 5;
 
 export function initSettingsView() {
-  const tokenCard = document.getElementById("settings-token-card");
-  const introBanner = document.getElementById("settings-intro-banner");
-  const introText = document.getElementById("settings-intro-text");
-  const tokenEntry = document.getElementById("settings-token-entry");
-  const tokenInput = document.getElementById("settings-token-input");
-  const testBtn = document.getElementById("settings-test-btn");
-  const saveBtn = document.getElementById("settings-save-btn");
-  const revokeBtn = document.getElementById("settings-revoke-btn");
-  const statusEl = document.getElementById("settings-status");
-  const connectedRow = document.getElementById("settings-connected-row");
-  const connectedLabel = document.getElementById("settings-connected-label");
-  const scopesEl = document.getElementById("settings-scopes");
+  const adapter = chromeStorageAdapter;
+  const byId = (id) => document.getElementById(id);
+
+  const tokenCard = byId("settings-token-card");
+  const introBanner = byId("settings-intro-banner");
+  const introText = byId("settings-intro-text");
+  const tokenEntry = byId("settings-token-entry");
+  const tokenInput = byId("settings-token-input");
+  const testBtn = byId("settings-test-btn");
+  const saveBtn = byId("settings-save-btn");
+  const revokeBtn = byId("settings-revoke-btn");
+  const statusEl = byId("settings-status");
+  const connectedRow = byId("settings-connected-row");
+  const connectedLabel = byId("settings-connected-label");
+  const scopesEl = byId("settings-scopes");
+  const accessNote = byId("settings-access-note");
 
   // Device Flow elements
-  const deviceConnectBtn = document.getElementById("settings-device-connect-btn");
-  const deviceStatusEl = document.getElementById("settings-device-status");
-  const deviceCodeEl = document.getElementById("settings-device-code");
-  const deviceCodeValueEl = deviceCodeEl?.querySelector(".device-code-value");
-  const deviceLinkEl = document.getElementById("settings-device-link");
-  const deviceCancelBtn = document.getElementById("settings-device-cancel-btn");
+  const deviceConnectBtn = byId("settings-device-connect-btn");
+  const deviceStatusEl = byId("settings-device-status");
+  const deviceCodeEl = byId("settings-device-code");
+  const deviceCodeValueEl = deviceCodeEl.querySelector(".device-code-value");
+  const deviceLinkEl = byId("settings-device-link");
+  const deviceCancelBtn = byId("settings-device-cancel-btn");
+  const privateRow = byId("settings-private-row");
+  const includePrivateBox = byId("settings-include-private");
 
-  let lastValidated = null; // { login, scopes, isFineGrained } from the most recent successful test-connection
+  let lastValidated = null; // { login, scopes, isFineGrained } from the latest successful Test Connection
+  let deviceFlowActive = false; // a code is requested/showing — don't let a refresh overwrite the button
+  let reconnectMode = false; // connected, but the saved token is failing auth
+  let devicePollTimer = null;
+  let refreshSeq = 0;
+
+  const emit = (name) => window.dispatchEvent(new CustomEvent(name));
+  const connectLabel = () => (reconnectMode ? "Reconnect GitHub" : "Connect GitHub");
+
+  /** Promise-returning wrapper so a missing worker never throws synchronously. */
+  function sendToWorker(message) {
+    try {
+      return Promise.resolve(chrome.runtime.sendMessage(message));
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  }
 
   function setStatus(msg, isError = false) {
     statusEl.hidden = !msg;
@@ -50,35 +83,57 @@ export function initSettingsView() {
     statusEl.classList.toggle("error", isError);
   }
 
+  /**
+   * Reads every piece of state first, then applies it to the DOM in one
+   * synchronous pass. A sequence number drops the result of any call that was
+   * overtaken by a newer one, so two overlapping refreshes (e.g. an
+   * auth-changed event landing mid-save) can never apply stale state last.
+   */
   async function refreshConnectedState() {
-    const token = await getToken(chromeStorageAdapter);
-    const isConnected = !!token;
+    const seq = ++refreshSeq;
+    const [token, authFailed, everConnected, scopes] = await Promise.all([
+      getToken(adapter),
+      getAuthFailed(adapter),
+      getHasEverConnected(adapter),
+      getGrantedScopes(adapter),
+    ]);
+    if (seq !== refreshSeq) return;
 
-    tokenCard.classList.toggle("is-connected", isConnected);
-    tokenEntry.hidden = isConnected;
+    const isConnected = !!token;
+    reconnectMode = isConnected && authFailed;
+    const showConnectOptions = !isConnected || reconnectMode;
+
+    // `is-connected` is the fully-healthy look; a failing token keeps the
+    // connect options visible above the connected row, so it needs the border.
+    tokenCard.classList.toggle("is-connected", isConnected && !reconnectMode);
+    tokenEntry.hidden = !showConnectOptions;
+    deviceConnectBtn.hidden = !showConnectOptions;
+    privateRow.hidden = !showConnectOptions;
     connectedRow.hidden = !isConnected;
-    if (deviceConnectBtn) deviceConnectBtn.hidden = isConnected;
+    connectedRow.classList.toggle("is-authfailed", reconnectMode);
+
+    if (!deviceFlowActive) {
+      deviceConnectBtn.textContent = connectLabel();
+      deviceConnectBtn.disabled = false;
+    }
 
     if (isConnected) {
       introBanner.hidden = true;
+      connectedLabel.textContent = reconnectMode
+        ? `Connected as ${maskToken(token)} — last check failed, reconnect`
+        : `Connected as ${maskToken(token)}`;
     } else {
-      const everConnected = await getHasEverConnected(chromeStorageAdapter);
       introText.textContent = everConnected
         ? "Your GitHub connection was removed or stopped working. Reconnect below."
         : "Welcome to GITSTREAK — connect your GitHub account to see your contribution activity, streak, and tracked repos.";
       introBanner.hidden = false;
     }
 
-    if (!isConnected) {
-      saveBtn.disabled = true;
-      return;
-    }
+    const note = isConnected ? describeAccess(scopes) : "";
+    accessNote.textContent = note;
+    accessNote.hidden = !note;
 
-    const authFailed = await getAuthFailed(chromeStorageAdapter);
-    connectedRow.classList.toggle("is-authfailed", authFailed);
-    connectedLabel.textContent = authFailed
-      ? `Connected as ${maskToken(token)} — last check failed, reconnect`
-      : `Connected as ${maskToken(token)}`;
+    saveBtn.disabled = !lastValidated;
   }
 
   // ------------------------------------------------------------------
@@ -86,27 +141,53 @@ export function initSettingsView() {
   // ------------------------------------------------------------------
 
   function renderDeviceStatus(msg) {
-    if (!deviceStatusEl) return;
     deviceStatusEl.hidden = !msg;
     deviceStatusEl.textContent = msg;
   }
 
+  function stopDevicePolling() {
+    if (devicePollTimer !== null) {
+      clearInterval(devicePollTimer);
+      devicePollTimer = null;
+    }
+  }
+
+  function startDevicePolling(intervalSec) {
+    stopDevicePolling();
+    const seconds = Number(intervalSec) > 0 ? Number(intervalSec) : DEFAULT_POLL_SECONDS;
+    devicePollTimer = setInterval(() => {
+      sendToWorker({ type: "gitstreak:poll-device-flow-now" }).catch(() => {});
+    }, (seconds + 1) * 1000);
+  }
+
   function resetDeviceUI() {
-    if (!deviceCodeEl) return;
+    stopDevicePolling();
+    deviceFlowActive = false;
     deviceCodeEl.hidden = true;
     deviceCancelBtn.hidden = true;
     deviceConnectBtn.disabled = false;
-    deviceConnectBtn.textContent = "Connect GitHub";
+    deviceConnectBtn.textContent = connectLabel();
+    includePrivateBox.disabled = false;
   }
 
   function ackDeviceStatus() {
-    chrome.runtime.sendMessage({ type: "gitstreak:ack-device-flow-status" }).catch(() => {});
+    sendToWorker({ type: "gitstreak:ack-device-flow-status" }).catch(() => {});
   }
 
   async function handleDeviceStatus(msg) {
     if (!msg) return;
 
     if (msg.status === "code_ready") {
+      // Defense in depth: the runner already rejects off-origin links, but
+      // this value becomes a clickable link next to a code we tell the user
+      // to type, so it is checked again at the point of use.
+      if (typeof msg.verificationUri !== "string" || !msg.verificationUri.startsWith(GITHUB_LINK_PREFIX)) {
+        sendToWorker({ type: "gitstreak:cancel-device-flow" }).catch(() => {});
+        resetDeviceUI();
+        renderDeviceStatus("GitHub returned an unexpected verification link — try again.");
+        return;
+      }
+      deviceFlowActive = true;
       deviceCodeEl.hidden = false;
       deviceCodeValueEl.textContent = msg.userCode;
       deviceLinkEl.href = msg.verificationUri;
@@ -114,20 +195,21 @@ export function initSettingsView() {
       deviceCancelBtn.hidden = false;
       deviceConnectBtn.disabled = true;
       deviceConnectBtn.textContent = "Waiting...";
-      renderDeviceStatus("Waiting for approval on GitHub — this can take a minute or so to register once you approve.");
+      includePrivateBox.disabled = true;
+      renderDeviceStatus("Waiting for approval on GitHub — this can take up to a minute to register once you approve.");
+      startDevicePolling(msg.interval);
     } else if (msg.status === "pending") {
-      // no-op, keep showing the same waiting copy
+      // keep showing the same waiting copy
     } else if (msg.status === "slow_down") {
       renderDeviceStatus("Still waiting — checking a little less often now.");
     } else if (msg.status === "success") {
-      // background.js already saved the token directly to the vault —
-      // this view's job now is purely to reflect that, via the same
-      // source of truth (getToken()) everything else uses.
+      // The worker already saved the connection — just reflect it, via the
+      // same source of truth (the vault) everything else uses.
       resetDeviceUI();
       renderDeviceStatus("");
       await refreshConnectedState();
-      window.dispatchEvent(new CustomEvent("gitstreak:auth-changed"));
-      window.dispatchEvent(new CustomEvent("gitstreak:token-saved")); // popup.js routes back to Pulse
+      emit("gitstreak:auth-changed");
+      emit("gitstreak:token-saved"); // popup.js routes back to Pulse; Pulse reloads
     } else if (msg.status === "cancelled") {
       resetDeviceUI();
       renderDeviceStatus("");
@@ -139,39 +221,52 @@ export function initSettingsView() {
     }
   }
 
-  if (deviceConnectBtn) {
-    deviceConnectBtn.addEventListener("click", () => {
-      deviceConnectBtn.disabled = true;
-      deviceConnectBtn.textContent = "Connecting...";
-      renderDeviceStatus("Requesting a code from GitHub...");
-      chrome.runtime.sendMessage({ type: "gitstreak:start-device-flow" });
-    });
-
-    deviceCancelBtn.addEventListener("click", () => {
-      chrome.runtime.sendMessage({ type: "gitstreak:cancel-device-flow" });
+  deviceConnectBtn.addEventListener("click", () => {
+    deviceFlowActive = true;
+    deviceConnectBtn.disabled = true;
+    deviceConnectBtn.textContent = "Connecting...";
+    includePrivateBox.disabled = true;
+    renderDeviceStatus("Requesting a code from GitHub...");
+    // Only a strict boolean `true` widens the request (see lib/scopes.js).
+    // The popup default is ticked; the worker's own default stays public-only.
+    sendToWorker({ type: "gitstreak:start-device-flow", includePrivate: includePrivateBox.checked === true }).catch(() => {
       resetDeviceUI();
-      renderDeviceStatus("");
+      renderDeviceStatus("Couldn't reach the extension's background service — reload the extension and try again.");
     });
+  });
 
-    // Live updates while this popup instance stays open.
-    chrome.runtime.onMessage.addListener((msg) => {
-      if (msg?.type !== "gitstreak:device-flow-status") return;
-      handleDeviceStatus(msg);
-    });
+  // The box is ticked by default (see popup.html). Unticking is the one
+  // choice with a visible cost, so it needs an explicit yes; "Cancel" puts
+  // the box back to the recommended state. The box is disabled while a flow
+  // is running, so this can't fire mid-flow.
+  includePrivateBox.addEventListener("change", () => {
+    if (includePrivateBox.checked) return;
+    if (!confirm(PUBLIC_ONLY_WARNING)) includePrivateBox.checked = true;
+  });
 
-    // Resync on open — catches a code still waiting for approval, or an
-    // error/cancellation that happened while this popup was closed.
-    // Success does NOT need to be caught here: refreshConnectedState()
-    // below (called unconditionally at the end of this function) already
-    // reflects a token background.js saved while this popup was closed.
-    chrome.runtime.sendMessage({ type: "gitstreak:query-device-flow-status" }, (status) => {
-      if (chrome.runtime.lastError) return; // background not ready yet, harmless
-      if (status) handleDeviceStatus(status);
-    });
-  }
+  deviceCancelBtn.addEventListener("click", () => {
+    sendToWorker({ type: "gitstreak:cancel-device-flow" }).catch(() => {});
+    resetDeviceUI();
+    renderDeviceStatus("");
+  });
+
+  // Live updates while this popup instance stays open.
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg?.type !== "gitstreak:device-flow-status") return;
+    handleDeviceStatus(msg);
+  });
+
+  // Resync on open — catches a code still waiting for approval, or an
+  // error/cancellation that happened while this popup was closed. Success
+  // needs no special case: refreshConnectedState() (called below) already
+  // reflects a connection the worker saved while this popup was closed.
+  chrome.runtime.sendMessage({ type: "gitstreak:query-device-flow-status" }, (status) => {
+    if (chrome.runtime.lastError) return; // background not ready yet, harmless
+    if (status) handleDeviceStatus(status);
+  });
 
   // ------------------------------------------------------------------
-  // Manual PAT entry (fallback path — unchanged logic, same functions)
+  // Manual PAT entry (fallback path)
   // ------------------------------------------------------------------
 
   testBtn.addEventListener("click", async () => {
@@ -211,19 +306,18 @@ export function initSettingsView() {
       setStatus("Test the connection first.", true);
       return;
     }
+    const scopes = lastValidated.scopes; // array for classic PATs, null (unknown) for fine-grained
     saveBtn.disabled = true;
     setStatus("Saving...");
     try {
-      await saveToken(chromeStorageAdapter, raw);
-      await setAuthFailed(chromeStorageAdapter, false);
-      await setHasEverConnected(chromeStorageAdapter, true);
+      await saveConnection(adapter, raw, { scopes });
       tokenInput.value = "";
       lastValidated = null;
       scopesEl.hidden = true;
       setStatus("Token saved.");
       await refreshConnectedState();
-      window.dispatchEvent(new CustomEvent("gitstreak:auth-changed"));
-      window.dispatchEvent(new CustomEvent("gitstreak:token-saved"));
+      emit("gitstreak:auth-changed");
+      emit("gitstreak:token-saved");
     } catch (e) {
       setStatus(e.message, true);
     } finally {
@@ -235,15 +329,36 @@ export function initSettingsView() {
     if (!confirm("Remove the saved GitHub connection from this browser? Pulse and private-repo tracking will stop working until you reconnect. This does not revoke anything on GitHub's side — do that at github.com/settings/tokens or github.com/settings/applications if needed.")) {
       return;
     }
+    revokeBtn.disabled = true;
     try {
-      await revokeToken(chromeStorageAdapter);
-      await setAuthFailed(chromeStorageAdapter, false);
+      // Stop any in-progress Device Flow first so a late approval can't
+      // silently reconnect right after the user chose to disconnect.
+      await sendToWorker({ type: "gitstreak:cancel-device-flow" }).catch(() => {});
+      resetDeviceUI();
+      renderDeviceStatus("");
+
+      await disconnect(adapter); // token + key + cache + connection id + scopes + private repos
+      lastValidated = null;
       setStatus("Disconnected locally.");
       await refreshConnectedState();
-      window.dispatchEvent(new CustomEvent("gitstreak:auth-changed"));
+      emit("gitstreak:auth-changed");
+      emit("gitstreak:disconnected"); // Pulse and Projects re-render without the old account's data
     } catch (e) {
       setStatus(e.message, true);
+    } finally {
+      revokeBtn.disabled = false;
     }
+  });
+
+  // Another view can change connection health while Settings is closed (Pulse
+  // or Projects hitting a 401). Re-read on those events so opening Settings
+  // never shows stale "Connected" copy. refreshConnectedState dispatches
+  // nothing, so this cannot loop (invariant 12).
+  window.addEventListener("gitstreak:auth-changed", () => {
+    refreshConnectedState();
+  });
+  window.addEventListener("gitstreak:open-settings", () => {
+    refreshConnectedState();
   });
 
   refreshConnectedState();
