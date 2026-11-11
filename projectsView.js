@@ -31,11 +31,12 @@
 // repos, "Check for Updates" against a private repo, and the new picker
 // (which only ever lists the authenticated account's own repos, so it
 // always needs one).
-import { getLatestCommit, getRepoMeta, parseRepoInput, listUserRepos, GitHubAuthError } from "./lib/github.js";
+import { getLatestCommit, getRepoMeta, parseRepoInput, repoKeyOf, listUserRepos, GitHubAuthError } from "./lib/github.js";
 import { createProjectStore, MAX_TRACKED } from "./lib/projectStore.js";
 import { chromeStorageAdapter } from "./lib/storageAdapter.js";
 import { getToken } from "./lib/tokenVault.js";
-import { setAuthFailed } from "./lib/authState.js";
+import { setAuthFailed, getGrantedScopes } from "./lib/authState.js";
+import { canReadPrivate } from "./lib/scopes.js";
 import { showToast } from "./toast.js";
 
 const store = createProjectStore(chromeStorageAdapter);
@@ -77,18 +78,6 @@ function compareByCommitRecency(a, b) {
   return new Date(b.lastCommitAt).getTime() - new Date(a.lastCommitAt).getTime();
 }
 
-/** Normalizes a stored `repo` field (URL, shorthand, whatever) down to a
- * lowercase "owner/repo" key, for cross-referencing against GitHub API
- * results. Malformed entries are just skipped — never block the picker. */
-function normalizeRepoKey(repoField) {
-  try {
-    const { owner, repo } = parseRepoInput(repoField);
-    return `${owner}/${repo}`.toLowerCase();
-  } catch {
-    return null;
-  }
-}
-
 export function initProjectsView() {
   const listEl = document.getElementById("project-list");
   const projectsCountEl = document.getElementById("projects-count");
@@ -118,12 +107,16 @@ export function initProjectsView() {
   const gpList = document.getElementById("gp-list");
   const gpLoadMoreBtn = document.getElementById("gp-load-more-btn");
   const gpCapNote = document.getElementById("gp-cap-note");
+  const gpScopeNote = document.getElementById("gp-scope-note");
 
   let pickerRepos = [];
   let pickerPage = 0;
   let pickerHasNextPage = false;
   let pickerLoading = false;
   let trackedKeySet = new Set();
+  // Bumped by closePicker(). A page fetch that was started before the picker
+  // closed (disconnect, 401, user close) must not repopulate it afterwards.
+  let pickerGen = 0;
 
   function setStatus(el, msg, isError = false) {
     el.hidden = !msg;
@@ -271,7 +264,17 @@ export function initProjectsView() {
    * callers decide how to surface them (alert vs. inline picker message).
    */
   async function createTrackedProject(name, repoFullName) {
-    const id = slugify(name);
+    // A project's identity is its lowercase "owner/repo" — not its display
+    // name — so the same repo can't be tracked twice under different names,
+    // and renaming/typing a name can never collide with another repo.
+    // parseRepoInput throws a readable message for unparseable input.
+    const { owner, repo } = parseRepoInput(repoFullName);
+    const id = `${owner}/${repo}`.toLowerCase();
+    // UX-only pre-check so a duplicate reads "already tracking" rather than
+    // the store's technical "id already exists" (new ids ARE the repo key).
+    // The store's own check, inside its write queue, remains the authority —
+    // two racing adds still can't both win.
+    if (await store.get(id)) throw new Error(`You're already tracking ${repoFullName}.`);
     await store.create(id, name, repoFullName);
     return id;
   }
@@ -361,6 +364,8 @@ export function initProjectsView() {
   }
 
   function closePicker() {
+    pickerGen++;
+    pickerLoading = false;
     pickerEl.hidden = true;
     gpSearch.value = "";
     pickerRepos = [];
@@ -370,13 +375,14 @@ export function initProjectsView() {
     gpLoadMoreBtn.hidden = true;
     setStatus(gpStatus, "");
     if (gpCapNote) gpCapNote.hidden = true;
+    if (gpScopeNote) gpScopeNote.hidden = true;
   }
 
   async function buildTrackedKeySet() {
     const projects = await store.list();
     const set = new Set();
     for (const p of projects) {
-      const key = normalizeRepoKey(p.repo);
+      const key = repoKeyOf(p.repo);
       if (key) set.add(key);
     }
     return set;
@@ -451,7 +457,8 @@ export function initProjectsView() {
         await checkForUpdates(id);
         await renderList();
       } catch (e) {
-        console.warn(`First check after picker-add failed for ${repo.fullName}: ${e.message}`);
+        if (e instanceof GitHubAuthError) await handleAuthFailure();
+        else console.warn(`First check after picker-add failed for ${repo.fullName}: ${e.message}`);
       }
     } catch (e) {
       alert(e.message);
@@ -463,11 +470,14 @@ export function initProjectsView() {
   async function loadPickerPage(page) {
     if (pickerLoading) return;
     pickerLoading = true;
+    const gen = pickerGen;
+    const isStale = () => gen !== pickerGen;
     gpLoadMoreBtn.disabled = true;
     setStatus(gpStatus, page === 1 ? "Loading your repos..." : "Loading more...");
 
     try {
       const token = await getToken(chromeStorageAdapter);
+      if (isStale()) return;
       if (!token) {
         // Shouldn't normally happen (checked before opening), but a token
         // could be revoked in another tab while the picker sits open.
@@ -481,6 +491,7 @@ export function initProjectsView() {
       }
 
       const { repos, hasNextPage } = await listUserRepos(token, { page, perPage: 30 });
+      if (isStale()) return; // closed/disconnected mid-request: drop the result
       pickerRepos = page === 1 ? repos : [...pickerRepos, ...repos];
       pickerPage = page;
       pickerHasNextPage = hasNextPage;
@@ -488,6 +499,7 @@ export function initProjectsView() {
       renderPickerList();
       gpLoadMoreBtn.hidden = !hasNextPage;
     } catch (e) {
+      if (isStale()) return;
       if (e instanceof GitHubAuthError) {
         closePicker();
         await handleAuthFailure();
@@ -495,7 +507,9 @@ export function initProjectsView() {
         setStatus(gpStatus, e.message, true);
       }
     } finally {
-      pickerLoading = false;
+      // Only the load that still owns the picker may release the lock — a
+      // stale one finishing late must not unlock a newer in-flight load.
+      if (!isStale()) pickerLoading = false;
       gpLoadMoreBtn.disabled = false;
     }
   }
@@ -520,6 +534,11 @@ export function initProjectsView() {
     }
 
     trackedKeySet = await buildTrackedKeySet();
+    // With a token that can only see public data the list is public repos
+    // only — say so, instead of looking like the private ones are missing.
+    // Unknown scopes (fine-grained token, older install) claim nothing.
+    const scopes = await getGrantedScopes(chromeStorageAdapter);
+    if (gpScopeNote) gpScopeNote.hidden = !(Array.isArray(scopes) && !canReadPrivate(scopes));
     pickerEl.hidden = false;
     await loadPickerPage(1);
   }
@@ -540,11 +559,21 @@ export function initProjectsView() {
     if (pickerHasNextPage) loadPickerPage(pickerPage + 1);
   });
 
-  renderList();
-}
+  // Disconnect removes tracked PRIVATE repos from storage (lib/connection.js)
+  // and the old account's repo list must not stay on screen. Re-read
+  // everything, and close any card/picker that points at something gone.
+  // Deliberately NOT auth-changed: handleAuthFailure() dispatches it (invariant 12).
+  window.addEventListener("gitstreak:disconnected", async () => {
+    closePicker();
+    try {
+      if (activeProjectId && !(await store.get(activeProjectId))) closeProjectDetail();
+      await renderList();
+    } catch (e) {
+      console.warn(`Couldn't refresh Projects after disconnect: ${e.message}`);
+    }
+  });
 
-function slugify(s) {
-  return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+  renderList();
 }
 
 function escapeHtml(s) {
