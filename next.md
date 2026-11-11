@@ -1,3 +1,7 @@
+> **⚠ SUPERSEDED — do not build from this file.** It predates hardening patches 1–2 and the view-layer wiring (patch 3).
+> It still says `SCOPE = "repo"`, a `github.com/*` host permission, and that `pollForToken` is retained — all no longer true.
+> The current state is described in `GITSTREAK-CONTEXT.md`; where they disagree, the code wins.
+
 # GITSTREAK — Session Addendum: Device Flow + 10-Repo Cap
 
 This is an addendum to `GITSTREAK-CONTEXT.md`, not a replacement. It covers
