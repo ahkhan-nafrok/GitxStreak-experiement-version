@@ -166,6 +166,7 @@
 
       <h2 class="gp-title">Add from GitHub</h2>
       <p id="gp-cap-note" class="hint gp-cap-note" hidden>You're tracking the max — remove one first to add more.</p>
+      <p id="gp-scope-note" class="hint gp-cap-note" hidden>Showing public repos only. To include private repos, reconnect with “Include my private repos” ticked in Settings.</p>
 
       <input id="gp-search" type="text" placeholder="Filter your repos..." autocomplete="off" />
       <div id="gp-status" class="status" hidden></div>
@@ -187,6 +188,22 @@
       <!-- Primary path: GitHub Device Flow. No token to copy/paste — a
            short code + a github.com link, approved from any device. -->
       <div class="field">
+        <!-- Ticked by default: without private access, "Last Pushed" and the
+             repo picker silently omit private repos, which reads as wrong
+             data. Unticking asks for confirmation (settingsView.js) and then
+             requests read:user only. Ticking requests the broader `repo`
+             scope — see lib/scopes.js. -->
+        <div id="settings-private-row" class="settings-private-row">
+          <label class="check-row" for="settings-include-private">
+            <input id="settings-include-private" type="checkbox" checked />
+            <span>Include my private repos</span>
+          </label>
+          <p class="hint">
+            Lets GITSTREAK see pushes to your private repos and track them. This uses GitHub's
+            <code>repo</code> scope, which GitHub only offers as read and write. GITSTREAK only ever reads,
+            but the token itself could write.
+          </p>
+        </div>
         <button id="settings-device-connect-btn" class="btn-primary" type="button">Connect GitHub</button>
         <div id="settings-device-code" class="device-code-box" hidden>
           <p class="hint">
@@ -228,6 +245,11 @@
         <span id="settings-connected-label" class="fact-line"></span>
         <button id="settings-revoke-btn" class="btn-ghost" type="button">Disconnect</button>
       </div>
+
+      <!-- One honest line describing what GitHub actually granted. Hidden
+           while disconnected or when the scopes are unknown (fine-grained
+           tokens, installs from before scopes were recorded). -->
+      <p id="settings-access-note" class="hint settings-access-note" hidden></p>
     </div>
 
     <div class="glass-card settings-security-note">
@@ -241,6 +263,12 @@
         never leaves this extension's own popup/background context, and every
         request goes only to <code>api.github.com</code> and, for connecting,
         <code>github.com</code>.
+      </p>
+      <p class="hint">
+        Honest limits: non-extractable stops scripts from exporting the key, but it can't protect
+        against someone who copies your browser profile, or malware running as you. Disconnecting
+        removes the token and key from this browser; to revoke it on GitHub's side, use
+        <code>github.com/settings/applications</code> or <code>github.com/settings/tokens</code>.
       </p>
     </div>
   </section>
