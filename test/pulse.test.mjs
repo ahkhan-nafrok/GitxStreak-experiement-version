@@ -13,6 +13,7 @@ import {
   buildContributionGrid,
   isContributionCacheStale,
   calculateCurrentStreak,
+  calculateYearTotal,
 } from "../lib/pulse.js";
 
 let passed = 0,
@@ -248,5 +249,25 @@ test(
   }
 );
 
+test("calculateYearTotal: sums only the current UTC calendar year, ignoring last year's days", () => {
+  const dayMap = { "2025-12-31": { count: 9 }, "2026-01-01": { count: 2 }, "2026-07-15": { count: 3 } };
+  assert.equal(calculateYearTotal(dayMap, new Date("2026-07-15T12:00:00Z")), 5);
+});
+
+test("calculateYearTotal: the year is taken in UTC — 23:30 on Dec 31 UTC is still the old year even where it's already Jan 1 locally", () => {
+  const dayMap = { "2025-06-01": { count: 4 }, "2026-01-01": { count: 7 } };
+  assert.equal(calculateYearTotal(dayMap, new Date("2025-12-31T23:30:00Z")), 4);
+  assert.equal(calculateYearTotal(dayMap, new Date("2026-01-01T00:00:00Z")), 7);
+});
+
+test("calculateYearTotal: empty, null, undefined and malformed entries are all safe (0 / skipped)", () => {
+  const now = new Date("2026-07-15T00:00:00Z");
+  assert.equal(calculateYearTotal({}, now), 0);
+  assert.equal(calculateYearTotal(null, now), 0);
+  assert.equal(calculateYearTotal(undefined, now), 0);
+  assert.equal(calculateYearTotal({ "2026-02-02": null, "2026-02-03": {}, "2026-02-04": { count: 2 } }, now), 2);
+});
+
 console.log(`\n${passed} passed, ${failed} failed.`);
 if (failed) process.exitCode = 1;
+
