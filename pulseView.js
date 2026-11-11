@@ -24,10 +24,12 @@
 import { ghGraphQL, getRecentlyPushedRepos, GitHubAuthError } from "./lib/github.js";
 import { chromeStorageAdapter } from "./lib/storageAdapter.js";
 import { getToken } from "./lib/tokenVault.js";
-import { setAuthFailed } from "./lib/authState.js";
+import { setAuthFailed, ensureConnectionId, getConnectionId } from "./lib/authState.js";
+import { PULSE_CACHE_KEY, cacheBelongsTo } from "./lib/accountData.js";
 import { showToast } from "./toast.js";
 import {
   getRolling12MonthRange,
+  toDateKeyUTC,
   CONTRIBUTION_QUERY,
   parseContributionCalendar,
   buildContributionGrid,
@@ -36,7 +38,6 @@ import {
   calculateYearTotal,
 } from "./lib/pulse.js";
 
-const CACHE_KEY = "ghContributionCache";
 const LAST_PUSHED_COUNT = 3;
 const SUCCESS_STATE_MS = 1600;
 const MONTH_NAMES = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
@@ -88,14 +89,12 @@ export function initPulseView() {
     }
   }
 
-  /** Today's date-key in the same YYYY-MM-DD shape as cell.date, so a
-   * single string comparison marks the current-day cell for the ember
-   * ring — no changes to lib/pulse.js's data shape needed. */
+  /** Today's date-key in the same YYYY-MM-DD shape as cell.date, so a single
+   * string comparison marks the current-day cell for the ember ring. UTC, to
+   * match GitHub's calendar days and every other date in the app — a local
+   * key put the ring on the wrong cell (or none) for hours each day. */
   function todayDateKey() {
-    const d = new Date();
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const dd = String(d.getDate()).padStart(2, "0");
-    return `${d.getFullYear()}-${mm}-${dd}`;
+    return toDateKeyUTC(new Date());
   }
 
   function renderGrid(weeks) {
@@ -130,7 +129,7 @@ export function initPulseView() {
         const firstDated = week.find((c) => c && c.date);
         let label = "";
         if (firstDated) {
-          const month = new Date(firstDated.date).getMonth();
+          const month = new Date(firstDated.date).getUTCMonth();
           if (month !== lastMonth) {
             label = MONTH_NAMES[month];
             lastMonth = month;
@@ -207,34 +206,64 @@ export function initPulseView() {
     renderLastUpdated(cache.fetchedAt || null);
   }
 
+  /** Wipes everything rendered from account data. Used when there is no
+   * connection (a disconnected popup must not keep the old account's repos and
+   * streak in the DOM) and when the cache on disk belongs to a different
+   * connection than the current one. */
+  function clearRendered() {
+    calendarWrap.hidden = true;
+    statsRow.hidden = true;
+    lastPushedEl.hidden = true;
+    lastUpdatedEl.hidden = true;
+    gridEl.innerHTML = "";
+    monthsEl.innerHTML = "";
+    plpListEl.innerHTML = "";
+  }
+
+  const emitAuthChanged = () => window.dispatchEvent(new CustomEvent("gitstreak:auth-changed"));
+  const stillConnected = async (connectionId) => (await getConnectionId(chromeStorageAdapter)) === connectionId;
+
+  // Bumped by every load(). A load that finds it was overtaken by a newer one
+  // (token-saved / disconnected arriving mid-flight, a second click) drops its
+  // result instead of rendering over the newer state.
+  let loadGen = 0;
+
   async function load(forceRefresh = false) {
+    const gen = ++loadGen;
+    const superseded = () => gen !== loadGen;
+
+    // An explicit click gets feedback (and double-click protection) at once,
+    // not after the vault has been read.
+    setUpdateBtnState(forceRefresh ? "loading" : "idle");
+
     const token = await getToken(chromeStorageAdapter);
+    if (superseded()) return;
     if (!token) {
+      clearRendered();
       tokenPrompt.hidden = false;
-      calendarWrap.hidden = true;
-      statsRow.hidden = true;
-      lastPushedEl.hidden = true;
-      lastUpdatedEl.hidden = true;
       setStatus("");
+      setUpdateBtnState("idle");
       return;
     }
     tokenPrompt.hidden = true;
 
-    const stored = await chromeStorageAdapter.get([CACHE_KEY]);
-    const cache = stored[CACHE_KEY] || null;
+    const connectionId = await ensureConnectionId(chromeStorageAdapter);
+    const stored = (await chromeStorageAdapter.get([PULSE_CACHE_KEY]))[PULSE_CACHE_KEY] || null;
+    if (superseded()) return;
 
-    // Cached data renders FIRST, unconditionally, before any freshness
-    // check or network call. A stale cache used to skip straight to the
-    // fetch attempt with nothing rendered, so a failed fetch (expired
-    // token, offline, rate limit) left the UI blank even with perfectly
-    // good data sitting in storage.
-    if (cache) {
-      renderAll(cache);
-    }
+    // A cache is trusted only if it was written under the CURRENT connection.
+    // Another account's data, data from before a disconnect, and data from
+    // before connection ids existed are all treated as absent (one refetch).
+    const cache = cacheBelongsTo(stored, connectionId) ? stored : null;
 
-    const stale =
-      isContributionCacheStale(cache) ||
-      (cache && !Array.isArray(cache.lastPushedRepos));
+    // Cached data renders FIRST, unconditionally, before any freshness check
+    // or network call, so a failed fetch (expired token, offline, rate limit)
+    // never blanks the UI (invariant 5). With no trusted cache, whatever the
+    // DOM still holds belongs to a previous account — clear it.
+    if (cache) renderAll(cache);
+    else clearRendered();
+
+    const stale = isContributionCacheStale(cache) || (cache && !Array.isArray(cache.lastPushedRepos));
     if (!forceRefresh && !stale) {
       setStatus("");
       return;
@@ -244,37 +273,66 @@ export function initPulseView() {
     setStatus(cache ? "" : "Fetching your latest activity...");
     try {
       const range = getRolling12MonthRange();
-      const [contribData, lastPushedRepos] = await Promise.all([
+      const [contribData, pushed] = await Promise.all([
         ghGraphQL(CONTRIBUTION_QUERY, { from: range.from, to: range.to }, token),
-        getRecentlyPushedRepos(token, LAST_PUSHED_COUNT).catch(() => []),
+        // null (not []) on failure, so a flaky second call can't erase a good list.
+        getRecentlyPushedRepos(token, LAST_PUSHED_COUNT).catch(() => null),
       ]);
-      const dayMap = parseContributionCalendar(contribData);
-      const grid = buildContributionGrid(contribData);
+
+      const sameConnection = await stillConnected(connectionId);
+      if (superseded()) return;
+      if (!sameConnection) {
+        // The account changed while this request was in flight. The result
+        // belongs to the old connection: drop it, then show the current one.
+        setUpdateBtnState("idle");
+        load(false).catch(reportLoadFailure);
+        return;
+      }
+
       const newCache = {
+        connectionId,
         asOfDateKey: range.asOfDateKey,
-        dayMap,
-        grid,
-        lastPushedRepos,
+        dayMap: parseContributionCalendar(contribData),
+        grid: buildContributionGrid(contribData),
+        lastPushedRepos: pushed ?? cache?.lastPushedRepos ?? [],
         fetchedAt: new Date().toISOString(),
       };
-      await chromeStorageAdapter.set({ [CACHE_KEY]: newCache });
+      await chromeStorageAdapter.set({ [PULSE_CACHE_KEY]: newCache });
+
+      // A disconnect can land between the check above and this write. If it
+      // did, don't leave the old account's data on disk.
+      if (!(await stillConnected(connectionId))) {
+        await chromeStorageAdapter.set({ [PULSE_CACHE_KEY]: null });
+        if (!superseded()) {
+          setUpdateBtnState("idle");
+          load(false).catch(reportLoadFailure);
+        }
+        return;
+      }
+      if (superseded()) return;
+
       renderAll(newCache);
       setStatus("");
       setUpdateBtnState("success");
       await setAuthFailed(chromeStorageAdapter, false);
-      window.dispatchEvent(new CustomEvent("gitstreak:auth-changed"));
+      emitAuthChanged();
     } catch (e) {
+      if (superseded()) return;
       if (e instanceof GitHubAuthError) {
-        await setAuthFailed(chromeStorageAdapter, true);
-        window.dispatchEvent(new CustomEvent("gitstreak:auth-changed"));
+        // Only blame the CURRENT connection: a 401 for a token that has since
+        // been replaced says nothing about the new one.
+        const sameConnection = await stillConnected(connectionId);
+        if (superseded()) return;
+        if (sameConnection) {
+          await setAuthFailed(chromeStorageAdapter, true);
+          emitAuthChanged();
+        }
         setUpdateBtnState("idle");
         setStatus("");
-        // The cache already rendered above and is left exactly as-is.
-        // Toast only fires on an explicit click (forceRefresh) — a silent
-        // background staleness refresh failing on every popup open would
-        // spam this on a dead token, which isn't the trigger point asked
-        // for; the click is.
-        if (forceRefresh) {
+        // The cache already rendered above and is left exactly as-is. The
+        // toast fires only on an explicit click (forceRefresh) — a silent
+        // background refresh failing on every popup open would spam it.
+        if (sameConnection && forceRefresh) {
           showToast("Your GitHub token stopped working — reconnect it to keep this up to date.", {
             actionLabel: "Open Settings",
             onAction: () => window.dispatchEvent(new CustomEvent("gitstreak:open-settings")),
@@ -288,11 +346,26 @@ export function initPulseView() {
     }
   }
 
+  /** load() can reject if chrome.storage itself fails; never leave an
+   * unhandled rejection or a button stuck on "Updating...". */
+  function reportLoadFailure(e) {
+    console.error("GITSTREAK pulse:", e);
+    setStatus("Couldn't load your data — try again.", true);
+    setUpdateBtnState("idle");
+  }
+  const runLoad = (force) => load(force).catch(reportLoadFailure);
+
   enableDragScroll(calendarWrap);
-  refreshBtn.addEventListener("click", () => load(true));
+  refreshBtn.addEventListener("click", () => runLoad(true));
   tokenCtaBtn?.addEventListener("click", () => window.dispatchEvent(new CustomEvent("gitstreak:open-settings")));
 
-  load(false);
+  // A new connection (token-saved) or a removed one (disconnected) changes
+  // which account's data this tab may show. Deliberately NOT auth-changed:
+  // this view dispatches that event, so handling it would loop (invariant 12).
+  window.addEventListener("gitstreak:token-saved", () => runLoad(false));
+  window.addEventListener("gitstreak:disconnected", () => runLoad(false));
+
+  runLoad(false);
 }
 
 /** Click-and-drag / touch-swipe horizontal scroll for the calendar wrap,
