@@ -845,10 +845,52 @@ button { font-family: var(--font-sans); }
 .gh-cal-grid { display: flex; gap: 3px; justify-content: flex-start; width: max-content; }
 .gh-cal-col { display: flex; flex-direction: column; gap: 3px; }
 .gh-cal-cell { width: 10px; height: 10px; border-radius: 2.5px; flex-shrink: 0; pointer-events: none; }
-.gh-cal-cell.is-active { background: var(--accent-strong); }
+/* Intensity: brightness only — the app allows no color outside the ember
+   accent, so "more contributions" is simply "more white". Level 4 is the
+   former binary-cell white. */
+.gh-cal-cell.is-active.lvl-1 { background: rgba(255, 255, 255, 0.22); }
+.gh-cal-cell.is-active.lvl-2 { background: rgba(255, 255, 255, 0.42); }
+.gh-cal-cell.is-active.lvl-3 { background: rgba(255, 255, 255, 0.68); }
+.gh-cal-cell.is-active.lvl-4 { background: var(--accent-strong); }
+.gh-cal-cell[data-date] { pointer-events: auto; }
+.gh-cal-cell[data-date]:hover { outline: 1px solid rgba(255, 255, 255, 0.55); outline-offset: 1px; }
 .gh-cal-cell.is-empty { background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); }
 .gh-cal-cell.is-blank { background: transparent; }
 .gh-cal-cell.is-today { box-shadow: 0 0 0 1.5px var(--ember); }
+
+/* "Less ▢▢▢▢▢ More" key under the calendar. */
+.gh-cal-legend {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  margin-top: 2px;
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
+.gh-cal-legend span:first-child { margin-right: 3px; }
+.gh-cal-legend span:last-child { margin-left: 3px; }
+.gh-cal-legend[hidden] { display: none; }
+
+/* Day tooltip (a child of <body>; see popup.html). */
+.cal-tooltip {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: #141414;
+  border: 1px solid var(--glass-border-strong);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: nowrap;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
+}
+.cal-tooltip b { color: var(--text-primary); font-weight: 700; }
+.cal-tooltip[hidden] { display: none; }
 
 .pulse-stats-row {
   display: flex;
