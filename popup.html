@@ -70,6 +70,17 @@
           <div id="pulse-calendar-grid" class="gh-cal-grid"></div>
         </div>
       </div>
+      <!-- Intensity key, outside the scrolling wrap so it never moves. Same
+           cell classes as the grid, so it can't drift from the real shades. -->
+      <div id="pulse-cal-legend" class="gh-cal-legend" aria-hidden="true" hidden>
+        <span>Less</span>
+        <span class="gh-cal-cell is-empty"></span>
+        <span class="gh-cal-cell is-active lvl-1"></span>
+        <span class="gh-cal-cell is-active lvl-2"></span>
+        <span class="gh-cal-cell is-active lvl-3"></span>
+        <span class="gh-cal-cell is-active lvl-4"></span>
+        <span>More</span>
+      </div>
       <div id="pulse-status" class="status" hidden></div>
 
       <div id="pulse-stats-row" class="pulse-stats-row" hidden>
@@ -281,6 +292,11 @@
     <span id="app-toast-msg" class="app-toast-msg"></span>
     <button id="app-toast-action" class="app-toast-action" type="button" hidden></button>
   </div>
+
+  <!-- Calendar day tooltip. Deliberately a direct child of <body>: the cards use
+       backdrop-filter, which would make them the containing block for a
+       position:fixed descendant and misplace the tooltip. -->
+  <div id="pulse-cal-tooltip" class="cal-tooltip" role="tooltip" hidden></div>
 
   <script type="module" src="popup.js"></script>
 </body>
