@@ -30,6 +30,9 @@ import { showToast } from "./toast.js";
 import {
   getRolling12MonthRange,
   toDateKeyUTC,
+  contributionScale,
+  getContributionLevel,
+  formatContributionTooltip,
   CONTRIBUTION_QUERY,
   parseContributionCalendar,
   buildContributionGrid,
@@ -48,6 +51,8 @@ export function initPulseView() {
   const calendarWrap = document.getElementById("pulse-calendar-wrap");
   const monthsEl = document.getElementById("pulse-calendar-months");
   const gridEl = document.getElementById("pulse-calendar-grid");
+  const legendEl = document.getElementById("pulse-cal-legend");
+  const tooltipEl = document.getElementById("pulse-cal-tooltip");
   const statsRow = document.getElementById("pulse-stats-row");
   const streakEl = document.getElementById("pulse-streak");
   const streakNoteEl = document.getElementById("pulse-streak-note");
@@ -97,16 +102,26 @@ export function initPulseView() {
     return toDateKeyUTC(new Date());
   }
 
-  function renderGrid(weeks) {
+  /** Paints the heatmap. Each cell's shade is its level (0..4) relative to
+   * the window's scale — the 95th percentile of active days (lib/pulse.js); the count rides along in
+   * data-count so the tooltip needs no second lookup. The cache's own
+   * `contributed` flag is the fallback for a day missing from dayMap, so an
+   * older cache still renders (as full-strength cells) until the next fetch. */
+  function renderGrid(weeks, dayMap = {}) {
+    hideTooltip(); // the cells under the pointer are about to be replaced
     const todayKey = todayDateKey();
+    const scale = contributionScale(dayMap);
     gridEl.innerHTML = weeks
       .map((week) => {
         const cellsHtml = week
           .map((cell) => {
             if (!cell) return '<div class="gh-cal-cell is-blank"></div>';
-            const classes = ["gh-cal-cell", cell.contributed ? "is-active" : "is-empty"];
+            const known = typeof dayMap[cell.date]?.count === "number";
+            const count = known ? dayMap[cell.date].count : cell.contributed ? 1 : 0;
+            const level = known ? getContributionLevel(count, scale) : cell.contributed ? 4 : 0;
+            const classes = ["gh-cal-cell", level > 0 ? `is-active lvl-${level}` : "is-empty"];
             if (cell.date === todayKey) classes.push("is-today");
-            return `<div class="${classes.join(" ")}" title="${escapeHtml(cell.date)}"></div>`;
+            return `<div class="${classes.join(" ")}" data-date="${escapeHtml(cell.date)}" data-count="${count}"></div>`;
           })
           .join("");
         return `<div class="gh-cal-col">${cellsHtml}</div>`;
@@ -114,6 +129,44 @@ export function initPulseView() {
       .join("");
     renderMonthLabels(weeks);
     scrollToPresent();
+  }
+
+  // ---- day tooltip -------------------------------------------------------
+  let tooltipCell = null;
+
+  function hideTooltip() {
+    tooltipCell = null;
+    if (tooltipEl) tooltipEl.hidden = true;
+  }
+
+  /** Centered above the cell, clamped inside the popup, flipped below when
+   * there's no room above. The text comes from a pure formatter over data we
+   * wrote ourselves (a date key and a number), not from GitHub strings. */
+  function showTooltip(cell) {
+    if (!tooltipEl) return;
+    const date = cell.dataset?.date;
+    const text = date ? formatContributionTooltip(date, Number(cell.dataset.count) || 0) : "";
+    if (!text) return hideTooltip();
+    tooltipCell = cell;
+    tooltipEl.innerHTML = text.replace(/^(\S+)/, "<b>$1</b>");
+    tooltipEl.hidden = false;
+
+    const rect = cell.getBoundingClientRect();
+    const w = tooltipEl.offsetWidth || 0;
+    const h = tooltipEl.offsetHeight || 0;
+    const viewportW = document.documentElement?.clientWidth || 380;
+    const left = Math.max(6, Math.min(rect.left + rect.width / 2 - w / 2, viewportW - w - 6));
+    const above = rect.top - h - 8;
+    tooltipEl.style.left = `${Math.round(left)}px`;
+    tooltipEl.style.top = `${Math.round(above >= 4 ? above : rect.bottom + 8)}px`;
+  }
+
+  function onGridPointerOver(e) {
+    // No tooltip while dragging the calendar — it would chase the cursor.
+    if (calendarWrap.classList.contains("is-dragging")) return hideTooltip();
+    const cell = e.target?.closest?.(".gh-cal-cell[data-date]");
+    if (!cell) return hideTooltip();
+    if (cell !== tooltipCell) showTooltip(cell);
   }
 
   /** One label per week-column, shown only when the month changes from
@@ -199,7 +252,8 @@ export function initPulseView() {
   function renderAll(cache) {
     calendarWrap.hidden = false;
     statsRow.hidden = false;
-    renderGrid(Array.isArray(cache.grid) ? cache.grid : []);
+    legendEl.hidden = false;
+    renderGrid(Array.isArray(cache.grid) ? cache.grid : [], cache.dayMap || {});
     renderStreak(cache.dayMap || {});
     renderYearTotal(cache.dayMap || {});
     renderLastPushed(cache.lastPushedRepos || []);
@@ -212,6 +266,8 @@ export function initPulseView() {
    * connection than the current one. */
   function clearRendered() {
     calendarWrap.hidden = true;
+    legendEl.hidden = true;
+    hideTooltip();
     statsRow.hidden = true;
     lastPushedEl.hidden = true;
     lastUpdatedEl.hidden = true;
@@ -356,6 +412,10 @@ export function initPulseView() {
   const runLoad = (force) => load(force).catch(reportLoadFailure);
 
   enableDragScroll(calendarWrap);
+  gridEl.addEventListener("mouseover", onGridPointerOver);
+  gridEl.addEventListener("mouseleave", hideTooltip);
+  calendarWrap.addEventListener("mousedown", hideTooltip);
+  calendarWrap.addEventListener("scroll", hideTooltip, { passive: true });
   refreshBtn.addEventListener("click", () => runLoad(true));
   tokenCtaBtn?.addEventListener("click", () => window.dispatchEvent(new CustomEvent("gitstreak:open-settings")));
 
