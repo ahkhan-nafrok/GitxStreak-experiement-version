@@ -121,7 +121,7 @@ if (clockOk) {
     const w = await boot();
     await waitFor(() => rendered(w) && w.el("pulse-calendar-grid").innerHTML.includes("gh-cal-cell"), "grid");
     const html = w.el("pulse-calendar-grid").innerHTML;
-    const todayCells = [...html.matchAll(/class="([^"]*is-today[^"]*)" title="([^"]+)"/g)];
+    const todayCells = [...html.matchAll(/class="([^"]*is-today[^"]*)" data-date="([^"]+)"/g)];
     assert.equal(todayCells.length, 1, "exactly one ringed cell");
     assert.equal(todayCells[0][2], "2026-07-15", "UTC today — the old local-time key would have picked 2026-07-14");
 
@@ -131,6 +131,130 @@ if (clockOk) {
     assert.deepEqual(labels, ["JUN", "JUL", ""], "JUN then JUL, from UTC dates");
   });
 }
+
+// ---------------------------------------------------------------- intensity + tooltip
+
+const cellHtml = (w, date) => (w.el("pulse-calendar-grid").innerHTML.match(new RegExp(`<div class="[^"]*" data-date="${date}" data-count="\\d+"></div>`)) || [""])[0];
+/** A stand-in for the hovered DOM cell: only what the handler reads. */
+const fakeCell = (date, count, rect = { left: 100, top: 200, width: 10, bottom: 210 }) => ({ dataset: { date, count: String(count) }, getBoundingClientRect: () => rect });
+const hover = (w, cell) => w.el("pulse-calendar-grid").dispatch("mouseover", { target: { closest: () => cell } });
+
+await test("cells are shaded by level against the window's scale, and carry their count", async () => {
+  mockGitHub(); // counts: 06-30:1  07-01:2  07-13:3  07-14:4 (max)  everything else 0
+  const w = await boot();
+  await waitFor(() => rendered(w) && w.el("pulse-calendar-grid").innerHTML.includes("data-date"), "grid");
+  assert.match(cellHtml(w, "2026-07-14"), /lvl-4.*data-count="4"/);
+  assert.match(cellHtml(w, "2026-07-13"), /lvl-3.*data-count="3"/);
+  assert.match(cellHtml(w, "2026-07-01"), /lvl-2.*data-count="2"/);
+  assert.match(cellHtml(w, "2026-06-30"), /lvl-1.*data-count="1"/);
+  assert.match(cellHtml(w, "2026-07-02"), /is-empty.*data-count="0"/);
+  assert.ok(!/lvl-/.test(cellHtml(w, "2026-07-02")), "an empty day has no level class");
+  assert.match(cellHtml(w, "2026-07-15"), /is-today/, "today keeps its ring alongside the shading");
+});
+
+await test("a single spike day does not flatten everything else: ordinary days keep their contrast and the spike caps at level 4", async () => {
+  const day = (date, contributionCount) => ({ date, contributionCount });
+  const days = [];
+  for (let i = 1; i <= 20; i++) days.push(day(`2026-06-${String(i).padStart(2, "0")}`, i)); // 1..20
+  days.push(day("2026-06-21", 500)); // the spike
+  mockGitHub({ graphql: () => jsonResponse({ data: { viewer: { contributionsCollection: { contributionCalendar: { weeks: [{ contributionDays: days.slice(0, 7) }, { contributionDays: days.slice(7, 14) }, { contributionDays: days.slice(14, 21) }] } } } } }) });
+  const w = await boot();
+  await waitFor(() => rendered(w) && w.el("pulse-calendar-grid").innerHTML.includes("2026-06-06"), "grid");
+  assert.match(cellHtml(w, "2026-06-06"), /lvl-2/, "6 against a scale of 20 is level 2; with a plain max (500) it would be level 1");
+  assert.match(cellHtml(w, "2026-06-11"), /lvl-3/);
+  assert.match(cellHtml(w, "2026-06-16"), /lvl-4/);
+  assert.match(cellHtml(w, "2026-06-21"), /lvl-4.*data-count="500"/, "the spike is capped, and its real count is still shown");
+});
+
+await test("an older cache whose dayMap lacks a day still renders it (full strength) instead of dropping it", async () => {
+  mockGitHub();
+  const w = await boot({ seedCache: { ...STALE_SEED, asOfDateKey: "2026-07-15", dayMap: {}, grid: [[{ date: "2026-07-14", contributed: true }, { date: "2026-07-15", contributed: false }, null, null, null, null, null]] } });
+  await waitFor(() => rendered(w) && w.el("pulse-calendar-grid").innerHTML.includes("data-date"), "grid");
+  assert.match(cellHtml(w, "2026-07-14"), /lvl-4.*data-count="1"/);
+  assert.match(cellHtml(w, "2026-07-15"), /is-empty/);
+});
+
+await test("the Less/More legend shows with the calendar and is hidden with it", async () => {
+  mockGitHub();
+  const w = await boot();
+  await waitFor(() => rendered(w), "render");
+  assert.equal(w.el("pulse-cal-legend").hidden, false);
+  await disconnect(adapter);
+  w.emit("gitstreak:disconnected");
+  await waitFor(() => w.el("pulse-cal-legend").hidden, "legend hidden after disconnect");
+});
+
+await test("tooltip: hovering a day shows GitHub-style text with the count emphasised; leaving hides it", async () => {
+  mockGitHub();
+  const w = await boot();
+  await waitFor(() => rendered(w) && w.el("pulse-calendar-grid").innerHTML.includes("data-date"), "grid");
+  assert.equal(w.el("pulse-cal-tooltip").hidden, true, "hidden until hovered");
+  await hover(w, fakeCell("2026-07-14", 4));
+  assert.equal(w.el("pulse-cal-tooltip").hidden, false);
+  assert.equal(w.el("pulse-cal-tooltip").innerHTML, "<b>4</b> contributions on July 14th.");
+  await hover(w, fakeCell("2026-07-12", 0));
+  assert.equal(w.el("pulse-cal-tooltip").innerHTML, "<b>No</b> contributions on July 12th.");
+  await w.el("pulse-calendar-grid").dispatch("mouseleave");
+  assert.equal(w.el("pulse-cal-tooltip").hidden, true);
+});
+
+await test("tooltip: positioned above the cell, centred, clamped inside the 380px popup, flipped below at the top edge", async () => {
+  mockGitHub();
+  const w = await boot();
+  await waitFor(() => rendered(w), "render");
+  const tip = w.el("pulse-cal-tooltip");
+  tip.offsetWidth = 200; tip.offsetHeight = 30;
+
+  await hover(w, fakeCell("2026-07-14", 1, { left: 100, top: 200, width: 10, bottom: 210 }));
+  assert.equal(tip.style.left, "6px", "100 + 5 - 100 = 5 would overflow the left gutter -> clamped to 6");
+  assert.equal(tip.style.top, "162px", "200 - 30 - 8");
+
+  await hover(w, fakeCell("2026-07-13", 1, { left: 372, top: 200, width: 10, bottom: 210 }));
+  assert.equal(tip.style.left, "174px", "right edge: 380 - 200 - 6");
+
+  await hover(w, fakeCell("2026-07-12", 1, { left: 150, top: 2, width: 10, bottom: 12 }));
+  assert.equal(tip.style.top, "20px", "no room above -> below: 12 + 8");
+});
+
+await test("tooltip: hidden while the calendar is being dragged, and when the pointer is over something that isn't a day", async () => {
+  mockGitHub();
+  const w = await boot();
+  await waitFor(() => rendered(w), "render");
+  await hover(w, fakeCell("2026-07-14", 4));
+  assert.equal(w.el("pulse-cal-tooltip").hidden, false);
+  w.el("pulse-calendar-wrap").classList.add("is-dragging");
+  await hover(w, fakeCell("2026-07-13", 3));
+  assert.equal(w.el("pulse-cal-tooltip").hidden, true, "no tooltip chasing a drag");
+  w.el("pulse-calendar-wrap").classList.remove("is-dragging");
+  await hover(w, fakeCell("2026-07-13", 3));
+  assert.equal(w.el("pulse-cal-tooltip").hidden, false);
+  await hover(w, null);
+  assert.equal(w.el("pulse-cal-tooltip").hidden, true);
+});
+
+await test("tooltip: pressing the mouse (start of a drag) and scrolling both dismiss it", async () => {
+  mockGitHub();
+  const w = await boot();
+  await waitFor(() => rendered(w), "render");
+  await hover(w, fakeCell("2026-07-14", 4));
+  await w.el("pulse-calendar-wrap").dispatch("mousedown", { pageX: 10 });
+  assert.equal(w.el("pulse-cal-tooltip").hidden, true);
+  await hover(w, fakeCell("2026-07-14", 4));
+  await w.el("pulse-calendar-wrap").dispatch("scroll");
+  assert.equal(w.el("pulse-cal-tooltip").hidden, true);
+});
+
+await test("tooltip: a re-render (new data) or a disconnect never leaves a stale tooltip on screen", async () => {
+  mockGitHub();
+  const w = await boot();
+  await waitFor(() => rendered(w) && cacheOnDisk(w), "first render");
+  await hover(w, fakeCell("2026-07-14", 4));
+  assert.equal(w.el("pulse-cal-tooltip").hidden, false);
+  await disconnect(adapter);
+  w.emit("gitstreak:disconnected");
+  await waitFor(() => !w.el("pulse-token-prompt").hidden, "empty state");
+  assert.equal(w.el("pulse-cal-tooltip").hidden, true);
+});
 
 // ---------------------------------------------------------------- cache trust
 
