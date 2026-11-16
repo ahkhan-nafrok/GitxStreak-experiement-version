@@ -14,6 +14,10 @@ import {
   isContributionCacheStale,
   calculateCurrentStreak,
   calculateYearTotal,
+  contributionScale,
+  getContributionLevel,
+  ordinal,
+  formatContributionTooltip,
 } from "../lib/pulse.js";
 
 let passed = 0,
@@ -266,6 +270,95 @@ test("calculateYearTotal: empty, null, undefined and malformed entries are all s
   assert.equal(calculateYearTotal(null, now), 0);
   assert.equal(calculateYearTotal(undefined, now), 0);
   assert.equal(calculateYearTotal({ "2026-02-02": null, "2026-02-03": {}, "2026-02-04": { count: 2 } }, now), 2);
+});
+
+test("getContributionLevel: zero / invalid input is level 0, any real contribution is at least level 1", () => {
+  for (const bad of [0, -3, NaN, undefined, null, "5"]) assert.equal(getContributionLevel(bad, 10), 0);
+  assert.equal(getContributionLevel(5, 0), 0, "no scale -> nothing to shade against");
+  assert.equal(getContributionLevel(1, 1000), 1, "a tiny day beside a huge spike is still visible");
+});
+
+test("getContributionLevel: quartiles of the scale (scale 8 -> 1-2 / 3-4 / 5-6 / 7-8)", () => {
+  const levels = [1, 2, 3, 4, 5, 6, 7, 8].map((c) => getContributionLevel(c, 8));
+  assert.deepEqual(levels, [1, 1, 2, 2, 3, 3, 4, 4]);
+});
+
+test("getContributionLevel: a steady one-a-day user sees every active day at full strength; the scale value is level 4; never above 4", () => {
+  assert.equal(getContributionLevel(1, 1), 4);
+  assert.equal(getContributionLevel(37, 37), 4);
+  assert.equal(getContributionLevel(500, 37), 4, "a count above the scale is clamped");
+});
+
+test("getContributionLevel: monotonic — more contributions never lowers the level", () => {
+  for (const max of [1, 3, 7, 30, 211]) {
+    let prev = 0;
+    for (let c = 0; c <= max; c++) {
+      const l = getContributionLevel(c, max);
+      assert.ok(l >= prev, `max=${max} c=${c}`);
+      prev = l;
+    }
+  }
+});
+
+test("contributionScale: the 95th percentile of ACTIVE days — a single huge spike does not set the scale", () => {
+  const dayMap = {};
+  for (let i = 1; i <= 20; i++) dayMap[`2026-03-${String(i).padStart(2, "0")}`] = { count: i };
+  dayMap["2026-04-01"] = { count: 500 }; // spike
+  dayMap["2026-04-02"] = { count: 0 };   // idle days never count towards the scale
+  dayMap["2026-04-03"] = { count: 0 };
+  assert.equal(contributionScale(dayMap), 20, "21 active days -> rank ceil(19.95)=20 -> the 20, not the 500");
+  // ...and so ordinary days keep visible contrast instead of all collapsing to level 1:
+  assert.deepEqual([2, 6, 11, 16, 20].map((c) => getContributionLevel(c, 20)), [1, 2, 3, 4, 4]);
+  assert.equal(getContributionLevel(500, 20), 4, "the spike itself caps at the brightest level");
+});
+
+test("contributionScale: small windows use their own maximum; empty, null and malformed maps are 0", () => {
+  assert.equal(contributionScale({ a: { count: 3 }, b: { count: 9 }, c: { count: 2 } }), 9);
+  assert.equal(contributionScale({ a: { count: 1 }, b: { count: 1 } }), 1);
+  assert.equal(contributionScale({}), 0);
+  assert.equal(contributionScale(null), 0);
+  assert.equal(contributionScale({ a: { count: 0 }, b: { count: 0 } }), 0);
+  assert.equal(contributionScale({ a: null, b: {}, c: { count: "7" }, d: { count: 2 } }), 2);
+});
+
+test("ordinal: st / nd / rd / th including the 11-13 and 21-23 edge cases", () => {
+  const got = [1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 24, 30, 31].map(ordinal);
+  assert.deepEqual(got, ["1st", "2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "23rd", "24th", "30th", "31st"]);
+});
+
+test("formatContributionTooltip: GitHub wording — singular, plural, none", () => {
+  const now = new Date("2026-11-16T12:00:00Z");
+  assert.equal(formatContributionTooltip("2026-11-16", 1, now), "1 contribution on November 16th.");
+  assert.equal(formatContributionTooltip("2026-07-04", 12, now), "12 contributions on July 4th.");
+  assert.equal(formatContributionTooltip("2026-03-01", 0, now), "No contributions on March 1st.");
+});
+
+test("formatContributionTooltip: the year appears only outside the current UTC year", () => {
+  const now = new Date("2026-01-02T00:00:00Z");
+  assert.equal(formatContributionTooltip("2025-12-31", 2, now), "2 contributions on December 31st, 2025.");
+  assert.equal(formatContributionTooltip("2026-01-01", 2, now), "2 contributions on January 1st.");
+});
+
+test("formatContributionTooltip: malformed dates give '' and bad counts read as none — never throws, never 'undefined'", () => {
+  const now = new Date("2026-11-16T00:00:00Z");
+  for (const bad of ["", "nope", "2026-13-01", "2026-00-10", "2026-05-32", undefined, null, 20260516]) {
+    assert.equal(formatContributionTooltip(bad, 3, now), "");
+  }
+  assert.equal(formatContributionTooltip("2026-05-16", NaN, now), "No contributions on May 16th.");
+  assert.equal(formatContributionTooltip("2026-05-16", -4, now), "No contributions on May 16th.");
+  assert.equal(formatContributionTooltip("2026-05-16", 2.9, now), "2 contributions on May 16th.");
+});
+
+test("formatContributionTooltip is timezone-proof: the same date text in any process timezone", () => {
+  const now = new Date("2026-06-01T00:00:00Z");
+  const original = process.env.TZ;
+  const outputs = new Set();
+  for (const tz of ["Pacific/Honolulu", "Asia/Kolkata", "Pacific/Kiritimati", "UTC"]) {
+    process.env.TZ = tz;
+    outputs.add(formatContributionTooltip("2026-03-01", 1, now));
+  }
+  process.env.TZ = original;
+  assert.deepEqual([...outputs], ["1 contribution on March 1st."]);
 });
 
 console.log(`\n${passed} passed, ${failed} failed.`);
