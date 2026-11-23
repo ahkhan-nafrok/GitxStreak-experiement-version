@@ -22,6 +22,7 @@
 // empty-state "Connect GitHub" CTA, wired to the same open-settings event
 // popup.js listens for.
 import { ghGraphQL, getRecentlyPushedRepos, GitHubAuthError } from "./lib/github.js";
+import { syncProgressionFromPulse } from "./lib/progression/sync.js";
 import { chromeStorageAdapter } from "./lib/storageAdapter.js";
 import { getToken } from "./lib/tokenVault.js";
 import { setAuthFailed, ensureConnectionId, getConnectionId } from "./lib/authState.js";
@@ -35,6 +36,7 @@ import {
   formatContributionTooltip,
   CONTRIBUTION_QUERY,
   parseContributionCalendar,
+  parseViewerId,
   buildContributionGrid,
   isContributionCacheStale,
   calculateCurrentStreak,
@@ -347,6 +349,7 @@ export function initPulseView() {
 
       const newCache = {
         connectionId,
+        viewerId: parseViewerId(contribData),
         asOfDateKey: range.asOfDateKey,
         dayMap: parseContributionCalendar(contribData),
         grid: buildContributionGrid(contribData),
@@ -366,6 +369,11 @@ export function initPulseView() {
         return;
       }
       if (superseded()) return;
+
+      // Pay out any XP this fresh data justifies. Strictly fire-and-forget: it
+      // reads only what was just fetched, and nothing it does (or fails to do)
+      // may affect what Pulse shows.
+      syncProgressionFromPulse(chromeStorageAdapter, newCache).catch((e) => console.warn("GITSTREAK progression:", e));
 
       renderAll(newCache);
       setStatus("");
@@ -532,3 +540,4 @@ function escapeHtml(s) {
   div.textContent = s;
   return div.innerHTML;
 }
+
